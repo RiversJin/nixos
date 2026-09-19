@@ -1,0 +1,1416 @@
+diff --git a/docs/wiki/Configuration:-Animations.md b/docs/wiki/Configuration:-Animations.md
+index 6441d33a46..15e2e595e5 100644
+--- a/docs/wiki/Configuration:-Animations.md
++++ b/docs/wiki/Configuration:-Animations.md
+@@ -62,6 +62,16 @@ animations {
+     recent-windows-close {
+         spring damping-ratio=1.0 stiffness=800 epsilon=0.001
+     }
++
++    cursor-expand {
++        duration-ms 200
++        curve "ease-out-cubic"
++    }
++
++    cursor-shrink {
++        duration-ms 300
++        curve "ease-out-cubic"
++    }
+ }
+ ```
+ 
+@@ -440,6 +450,36 @@ animations {
+ }
+ ```
+ 
++#### `cursor-expand`
++
++<sup>Since: 25.??</sup>
++
++Animation when the cursor grows due to shake detection.
++
++```kdl
++animations {
++    cursor-expand {
++        duration-ms 200
++        curve "ease-out-cubic"
++    }
++}
++```
++
++#### `cursor-shrink`
++
++<sup>Since: 25.??</sup>
++
++Animation when the cursor returns to normal size after shake.
++
++```kdl
++animations {
++    cursor-shrink {
++        duration-ms 300
++        curve "ease-out-cubic"
++    }
++}
++```
++
+ ### Synchronized Animations
+ 
+ <sup>Since: 0.1.5</sup>
+diff --git a/docs/wiki/Configuration:-Miscellaneous.md b/docs/wiki/Configuration:-Miscellaneous.md
+index 7a2f42dd26..65e22e7139 100644
+--- a/docs/wiki/Configuration:-Miscellaneous.md
++++ b/docs/wiki/Configuration:-Miscellaneous.md
+@@ -22,6 +22,16 @@ cursor {
+ 
+     hide-when-typing
+     hide-after-inactive-ms 1000
++    // shake {
++        // off
++        // max-multiplier 2.5
++        // post-expand-delay-ms 250
++        // expand-duration-ms 200
++        // decay-duration-ms 300
++        // shake-interval-ms 400
++        // min-diagonal 100.0
++        // sensitivity 2.0
++    // }
+ }
+ 
+ overview {
+@@ -196,6 +206,119 @@ cursor {
+ }
+ ```
+ 
++#### `shake` (cursor.shake)
++
++<sup>Since: 25.??</sup>
++
++Cursor shake detection temporarily enlarges the cursor when you shake the mouse, making it easier to find.
++
++`off` disables cursor shake detection.
++
++```kdl
++cursor {
++    shake {
++        // off
++        max-multiplier 4.5
++        behavior "hold"
++        sensitivity 2.0
++    }
++}
++```
++
++#### `max-multiplier`
++
++Maximum cursor size multiplier when shake is detected.
++
++```kdl
++shake {
++    max-multiplier 2.5
++}
++```
++
++#### `behavior`
++
++How the enlarged cursor behaves:
++  - `"hold"` (default): stays enlarged while moving, shrinks when stopped.
++  - `"intensity"`: stays enlarged while shaking continues, shrinks when intensity drops.
++
++```kdl
++shake {
++    behavior "hold"
++}
++```
++
++#### `cooldown-ms`
++
++Time to wait after shrinking before detecting shakes again.
++
++```kdl
++shake {
++    cooldown-ms 400
++}
++```
++
++#### `stopped-threshold-ms`
++
++For `behavior "hold"`: time without motion to consider pointer stopped.
++
++```kdl
++shake {
++    stopped-threshold-ms 50
++}
++```
++
++#### `shake-relax-ms`
++
++For `behavior "intensity"`: time below sensitivity threshold before shrinking.
++
++```kdl
++shake {
++    shake-relax-ms 150
++}
++```
++
++#### `post-expand-delay-ms`
++
++Delay after expansion completes before starting shrink.
++
++```kdl
++shake {
++    post-expand-delay-ms 250
++}
++```
++
++> **Note:** Expansion and shrink animations are configured through the global `animations` settings using `cursor-expand` and `cursor-shrink`. See [Animations](./Configuration:-Animations.md) for details.
++
++#### shake-interval-ms
++
++Time window for tracking pointer motion history.
++
++```kdl
++shake {
++    shake-interval-ms 400
++}
++```
++
++#### min-diagonal
++
++Minimum movement area (in pixels) required to detect shake.
++
++```kdl
++shake {
++    min-diagonal 100.0
++}
++```
++
++#### sensitivity
++
++Shake detection threshold. Higher values require more vigorous shaking.
++
++```kdl
++shake {
++    sensitivity 2.0
++}
++```
++
+ ### `overview`
+ 
+ <sup>Since: 25.05</sup>
+diff --git a/niri-config/src/animations.rs b/niri-config/src/animations.rs
+index 346b62517a..045a0cc0f6 100644
+--- a/niri-config/src/animations.rs
++++ b/niri-config/src/animations.rs
+@@ -19,6 +19,8 @@ pub struct Animations {
+     pub screenshot_ui_open: ScreenshotUiOpenAnim,
+     pub overview_open_close: OverviewOpenCloseAnim,
+     pub recent_windows_close: RecentWindowsCloseAnim,
++    pub cursor_expand: CursorExpandAnim,
++    pub cursor_shrink: CursorShrinkAnim,
+ }
+ 
+ impl Default for Animations {
+@@ -37,6 +39,8 @@ impl Default for Animations {
+             screenshot_ui_open: Default::default(),
+             overview_open_close: Default::default(),
+             recent_windows_close: Default::default(),
++            cursor_expand: Default::default(),
++            cursor_shrink: Default::default(),
+         }
+     }
+ }
+@@ -71,6 +75,10 @@ pub struct AnimationsPart {
+     pub overview_open_close: Option<OverviewOpenCloseAnim>,
+     #[knuffel(child)]
+     pub recent_windows_close: Option<RecentWindowsCloseAnim>,
++    #[knuffel(child)]
++    pub cursor_expand: Option<CursorExpandAnim>,
++    #[knuffel(child)]
++    pub cursor_shrink: Option<CursorShrinkAnim>,
+ }
+ 
+ impl MergeWith<AnimationsPart> for Animations {
+@@ -97,6 +105,8 @@ impl MergeWith<AnimationsPart> for Animations {
+             screenshot_ui_open,
+             overview_open_close,
+             recent_windows_close,
++            cursor_expand,
++            cursor_shrink,
+         );
+     }
+ }
+@@ -326,6 +336,36 @@ impl Default for RecentWindowsCloseAnim {
+     }
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct CursorExpandAnim(pub Animation);
++
++impl Default for CursorExpandAnim {
++    fn default() -> Self {
++        Self(Animation {
++            off: false,
++            kind: Kind::Easing(EasingParams {
++                duration_ms: 200,
++                curve: Curve::EaseOutCubic,
++            }),
++        })
++    }
++}
++
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct CursorShrinkAnim(pub Animation);
++
++impl Default for CursorShrinkAnim {
++    fn default() -> Self {
++        Self(Animation {
++            off: false,
++            kind: Kind::Easing(EasingParams {
++                duration_ms: 300,
++                curve: Curve::EaseOutCubic,
++            }),
++        })
++    }
++}
++
+ impl<S> knuffel::Decode<S> for WorkspaceSwitchAnim
+ where
+     S: knuffel::traits::ErrorSpan,
+@@ -524,6 +564,36 @@ where
+     }
+ }
+ 
++impl<S> knuffel::Decode<S> for CursorExpandAnim
++where
++    S: knuffel::traits::ErrorSpan,
++{
++    fn decode_node(
++        node: &knuffel::ast::SpannedNode<S>,
++        ctx: &mut knuffel::decode::Context<S>,
++    ) -> Result<Self, DecodeError<S>> {
++        let default = Self::default().0;
++        Ok(Self(Animation::decode_node(node, ctx, default, |_, _| {
++            Ok(false)
++        })?))
++    }
++}
++
++impl<S> knuffel::Decode<S> for CursorShrinkAnim
++where
++    S: knuffel::traits::ErrorSpan,
++{
++    fn decode_node(
++        node: &knuffel::ast::SpannedNode<S>,
++        ctx: &mut knuffel::decode::Context<S>,
++    ) -> Result<Self, DecodeError<S>> {
++        let default = Self::default().0;
++        Ok(Self(Animation::decode_node(node, ctx, default, |_, _| {
++            Ok(false)
++        })?))
++    }
++}
++
+ impl Animation {
+     pub fn new_off() -> Self {
+         Self {
+diff --git a/niri-config/src/misc.rs b/niri-config/src/misc.rs
+index 66a200ca35..4b7d470133 100644
+--- a/niri-config/src/misc.rs
++++ b/niri-config/src/misc.rs
+@@ -14,12 +14,98 @@ pub struct SpawnShAtStartup {
+     pub command: String,
+ }
+ 
++#[derive(Debug, Clone, PartialEq)]
++pub struct ShakeConfig {
++    pub off: bool,
++    pub max_multiplier: f64,
++    pub post_expand_delay_ms: u64,
++    pub expand_duration_ms: u64,
++    pub decay_duration_ms: u64,
++    pub shake_interval_ms: u64,
++    pub min_diagonal: f64,
++    pub sensitivity: f64,
++    pub cooldown_ms: Option<u64>,
++    pub behavior: Option<String>,
++    pub stopped_threshold_ms: Option<u64>,
++    pub shake_relax_ms: Option<u64>,
++}
++
++impl Default for ShakeConfig {
++    fn default() -> Self {
++        Self {
++            off: true,
++            max_multiplier: 4.5,
++            post_expand_delay_ms: 250,
++            expand_duration_ms: 200,
++            decay_duration_ms: 300,
++            shake_interval_ms: 400,
++            min_diagonal: 100.0,
++            sensitivity: 2.0,
++            cooldown_ms: Some(400),
++            behavior: Some(String::from("hold")),
++            stopped_threshold_ms: Some(50),
++            shake_relax_ms: Some(150),
++        }
++    }
++}
++
++#[derive(knuffel::Decode, Debug, PartialEq)]
++pub struct ShakeConfigPart {
++    #[knuffel(child)]
++    pub off: bool,
++    #[knuffel(child)]
++    pub on: bool,
++    #[knuffel(child, unwrap(argument))]
++    pub max_multiplier: Option<f64>,
++    #[knuffel(child, unwrap(argument))]
++    pub post_expand_delay_ms: Option<u64>,
++    #[knuffel(child, unwrap(argument))]
++    pub expand_duration_ms: Option<u64>,
++    #[knuffel(child, unwrap(argument))]
++    pub decay_duration_ms: Option<u64>,
++    #[knuffel(child, unwrap(argument))]
++    pub shake_interval_ms: Option<u64>,
++    #[knuffel(child, unwrap(argument))]
++    pub min_diagonal: Option<f64>,
++    #[knuffel(child, unwrap(argument))]
++    pub sensitivity: Option<f64>,
++    #[knuffel(child, unwrap(argument))]
++    pub cooldown_ms: Option<u64>,
++    #[knuffel(child, unwrap(argument, str))]
++    pub behavior: Option<String>,
++    #[knuffel(child, unwrap(argument))]
++    pub stopped_threshold_ms: Option<u64>,
++    #[knuffel(child, unwrap(argument))]
++    pub shake_relax_ms: Option<u64>,
++}
++
++impl MergeWith<ShakeConfigPart> for ShakeConfig {
++    fn merge_with(&mut self, part: &ShakeConfigPart) {
++        self.off |= part.off;
++        if part.on {
++            self.off = false;
++        }
++        merge_clone!((self, part), sensitivity);
++        merge_clone!((self, part), max_multiplier);
++        merge_clone!((self, part), post_expand_delay_ms);
++        merge_clone!((self, part), expand_duration_ms);
++        merge_clone!((self, part), decay_duration_ms);
++        merge_clone!((self, part), shake_interval_ms);
++        merge_clone!((self, part), min_diagonal);
++        merge_clone_opt!((self, part), cooldown_ms);
++        merge_clone_opt!((self, part), behavior);
++        merge_clone_opt!((self, part), stopped_threshold_ms);
++        merge_clone_opt!((self, part), shake_relax_ms);
++    }
++}
++
+ #[derive(Debug, PartialEq)]
+ pub struct Cursor {
+     pub xcursor_theme: String,
+     pub xcursor_size: u8,
+     pub hide_when_typing: bool,
+     pub hide_after_inactive_ms: Option<u32>,
++    pub shake: ShakeConfig,
+ }
+ 
+ impl Default for Cursor {
+@@ -29,6 +115,7 @@ impl Default for Cursor {
+             xcursor_size: 24,
+             hide_when_typing: false,
+             hide_after_inactive_ms: None,
++            shake: Default::default(),
+         }
+     }
+ }
+@@ -43,6 +130,8 @@ pub struct CursorPart {
+     pub hide_when_typing: Option<Flag>,
+     #[knuffel(child, unwrap(argument))]
+     pub hide_after_inactive_ms: Option<u32>,
++    #[knuffel(child)]
++    pub shake: Option<ShakeConfigPart>,
+ }
+ 
+ impl MergeWith<CursorPart> for Cursor {
+@@ -50,6 +139,7 @@ impl MergeWith<CursorPart> for Cursor {
+         merge_clone!((self, part), xcursor_theme, xcursor_size);
+         merge!((self, part), hide_when_typing);
+         merge_clone_opt!((self, part), hide_after_inactive_ms);
++        merge!((self, part), shake);
+     }
+ }
+ 
+diff --git a/src/cursor.rs b/src/cursor.rs
+index a856de94f4..c3868c897b 100644
+--- a/src/cursor.rs
++++ b/src/cursor.rs
+@@ -1,4 +1,4 @@
+-use std::cell::RefCell;
++use std::cell::{Cell, RefCell};
+ use std::collections::HashMap;
+ use std::env;
+ use std::fs::File;
+@@ -15,6 +15,11 @@ use smithay::wayland::compositor::with_states;
+ use xcursor::parser::{parse_xcursor, Image};
+ use xcursor::CursorTheme;
+ 
++const MAX_CURSOR_PIXELS: i32 = 256;
++const CURSOR_SIZES: &[i32] = &[
++    12, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 112, 128, 144, 160, 192, 224, 256,
++];
++
+ /// Some default looking `left_ptr` icon.
+ static FALLBACK_CURSOR_DATA: &[u8] = include_bytes!("../resources/cursor.rgba");
+ 
+@@ -25,6 +30,7 @@ pub struct CursorManager {
+     size: u8,
+     current_cursor: CursorImageStatus,
+     named_cursor_cache: RefCell<XCursorCache>,
++    dynamic_size_multiplier: Cell<f32>,
+ }
+ 
+ impl CursorManager {
+@@ -36,6 +42,7 @@ impl CursorManager {
+         Self {
+             theme,
+             size,
++            dynamic_size_multiplier: Cell::new(1.0),
+             current_cursor: CursorImageStatus::default_named(),
+             named_cursor_cache: Default::default(),
+         }
+@@ -59,7 +66,7 @@ impl CursorManager {
+     }
+ 
+     /// Get the current rendering cursor.
+-    pub fn get_render_cursor(&self, scale: i32) -> RenderCursor {
++    pub fn get_render_cursor(&self, scale: i32, fractional_scale: f64) -> RenderCursor {
+         match self.current_cursor.clone() {
+             CursorImageStatus::Hidden => RenderCursor::Hidden,
+             CursorImageStatus::Surface(surface) => {
+@@ -75,21 +82,44 @@ impl CursorManager {
+ 
+                 RenderCursor::Surface { hotspot, surface }
+             }
+-            CursorImageStatus::Named(icon) => self.get_render_cursor_named(icon, scale),
++            CursorImageStatus::Named(icon) => {
++                self.get_render_cursor_named(icon, scale, fractional_scale)
++            }
+         }
+     }
+ 
+-    fn get_render_cursor_named(&self, icon: CursorIcon, scale: i32) -> RenderCursor {
+-        self.get_cursor_with_name(icon, scale)
++    fn get_render_cursor_named(
++        &self,
++        icon: CursorIcon,
++        scale: i32,
++        fractional_scale: f64,
++    ) -> RenderCursor {
++        let pixel_size = self.texture_pixel_size(scale, fractional_scale);
++        // Smooth residual scaling on top of the chosen discrete texture size.
++        // When the multiplier exceeds what `CURSOR_SIZES` provides, this keeps
++        // growing past 1.0 and yields a pixelated-but-continuous magnification.
++        let nat_size = self.effective_cursor_pixel_size(scale, fractional_scale) as f64;
++        let mult = self.dynamic_size_multiplier.get() as f64;
++        let desired = nat_size * mult;
++        let rescale = if pixel_size > 0 {
++            desired / pixel_size as f64
++        } else {
++            1.0
++        };
++        self.get_cursor_with_name(icon, scale, fractional_scale)
+             .map(|cursor| RenderCursor::Named {
+                 icon,
+                 scale,
+                 cursor,
++                pixel_size,
++                rescale,
+             })
+             .unwrap_or_else(|| RenderCursor::Named {
+                 icon: Default::default(),
+                 scale,
+-                cursor: self.get_default_cursor(scale),
++                cursor: self.get_default_cursor(scale, fractional_scale),
++                pixel_size,
++                rescale,
+             })
+     }
+ 
+@@ -98,25 +128,100 @@ impl CursorManager {
+             CursorImageStatus::Hidden => false,
+             CursorImageStatus::Surface(_) => false,
+             CursorImageStatus::Named(icon) => self
+-                .get_cursor_with_name(*icon, scale)
+-                .unwrap_or_else(|| self.get_default_cursor(scale))
++                .get_cursor_with_name(*icon, scale, scale as f64)
++                .unwrap_or_else(|| self.get_default_cursor(scale, scale as f64))
+                 .is_animated_cursor(),
+         }
+     }
+ 
+-    /// Get named cursor for the given `icon` and `scale`.
+-    pub fn get_cursor_with_name(&self, icon: CursorIcon, scale: i32) -> Option<Rc<XCursor>> {
++    /// Set the common dynamic multiplier for cursor sizes.
++    pub fn set_size_multiplier(&mut self, m: f32) {
++        let m = m.max(1.0);
++        let old = self.dynamic_size_multiplier.get();
++        if (old - m).abs() > 0.001 {
++            self.dynamic_size_multiplier.set(m);
++            // Only clear cache when crossing the magnification boundary; for
++            // intermediate values the residual rescale handles smoothness so
++            // we can reuse cached textures.
++            if (old <= 1.01) != (m <= 1.01) {
++                self.named_cursor_cache.get_mut().clear();
++            }
++        }
++    }
++
++    pub fn size_multiplier(&self) -> f32 {
++        self.dynamic_size_multiplier.get()
++    }
++
++    /// Compute the effective pixel size for the cursor considering fractional scaling.
++    ///
++    /// This always returns a size from `CURSOR_SIZES` (the "natural" set of sizes a
++    /// well-behaved xcursor theme provides). It does *not* fold in the dynamic
++    /// magnification multiplier: that is applied at render time via a smooth
++    /// rescale element on top of the chosen texture, so we can grow past the
++    /// largest provided size without losing animation smoothness.
++    pub fn effective_cursor_pixel_size(&self, scale: i32, fractional_scale: f64) -> i32 {
++        let base_size = self.size as f32;
++
++        let effective_scale = if (fractional_scale - scale as f64).abs() > 0.01 {
++            fractional_scale as f32
++        } else {
++            scale as f32
++        };
++
++        let target_size = (base_size * effective_scale).round() as i32;
++
++        let snapped = CURSOR_SIZES
++            .iter()
++            .min_by_key(|&&s| (s - target_size).abs())
++            .copied()
++            .unwrap_or(target_size);
++
++        snapped.min(MAX_CURSOR_PIXELS).max(1)
++    }
++
++    /// Pixel size used for the cached cursor texture, taking magnification into
++    /// account: while magnified we pick the largest theme-provided size that
++    /// still fits within the desired multiplier, so the residual rescale stays
++    /// in the `[1.0, next_size/this_size)` range and looks sharp until we run
++    /// out of available sizes (after which we keep upscaling, pixelated).
++    pub fn texture_pixel_size(&self, scale: i32, fractional_scale: f64) -> i32 {
++        let base_size = self.size as f32;
++        let mult = self.dynamic_size_multiplier.get();
++
++        let effective_scale = if (fractional_scale - scale as f64).abs() > 0.01 {
++            fractional_scale as f32
++        } else {
++            scale as f32
++        };
++
++        let desired = (base_size * effective_scale * mult).round() as i32;
++
++        let chosen = CURSOR_SIZES
++            .iter()
++            .copied()
++            .filter(|&s| s <= desired)
++            .max()
++            .or_else(|| CURSOR_SIZES.iter().copied().min())
++            .unwrap_or(desired);
++
++        chosen.min(MAX_CURSOR_PIXELS).max(1)
++    }
++
++    pub fn get_cursor_with_name(&self, icon: CursorIcon, scale: i32, fractional_scale: f64) -> Option<Rc<XCursor>> {
++        // Use texture pixel size (includes magnification snap) for the cache key
++        // so each discrete size we render gets its own entry.
++        let pixel_size = self.texture_pixel_size(scale, fractional_scale);
+         self.named_cursor_cache
+             .borrow_mut()
+-            .entry((icon, scale))
+-            .or_insert_with_key(|(icon, scale)| {
+-                let size = self.size as i32 * scale;
+-                let mut cursor = Self::load_xcursor(&self.theme, icon.name(), size);
++            .entry((icon, pixel_size))
++            .or_insert_with_key(|(icon, size)| {
++                let mut cursor = Self::load_xcursor(&self.theme, icon.name(), *size);
+ 
+                 // Check alternative names to account for non-compliant themes.
+                 if cursor.is_err() {
+                     for name in icon.alt_names() {
+-                        cursor = Self::load_xcursor(&self.theme, name, size);
++                        cursor = Self::load_xcursor(&self.theme, name, *size);
+                         if cursor.is_ok() {
+                             break;
+                         }
+@@ -138,9 +243,8 @@ impl CursorManager {
+     }
+ 
+     /// Get default cursor.
+-    pub fn get_default_cursor(&self, scale: i32) -> Rc<XCursor> {
+-        // The default cursor always has a fallback.
+-        self.get_cursor_with_name(CursorIcon::Default, scale)
++    pub fn get_default_cursor(&self, scale: i32, fractional_scale: f64) -> Rc<XCursor> {
++        self.get_cursor_with_name(CursorIcon::Default, scale, fractional_scale)
+             .unwrap()
+     }
+ 
+@@ -222,10 +326,17 @@ pub enum RenderCursor {
+         icon: CursorIcon,
+         scale: i32,
+         cursor: Rc<XCursor>,
++        pixel_size: i32,
++        /// Residual scale applied around the hotspot at render time, on top of
++        /// the discrete texture size chosen above. Values >1.0 magnify; equal
++        /// to 1.0 when not magnified or when the multiplier landed exactly on a
++        /// theme-provided size.
++        rescale: f64,
+     },
+ }
+ 
+-type TextureCache = HashMap<(CursorIcon, i32), Vec<MemoryRenderBuffer>>;
++/// Key is: (CursorIcon, pixel_size, output_integer_scale)
++type TextureCache = HashMap<(CursorIcon, i32, i32), Vec<MemoryRenderBuffer>>;
+ 
+ #[derive(Default)]
+ pub struct CursorTextureCache {
+@@ -240,13 +351,14 @@ impl CursorTextureCache {
+     pub fn get(
+         &self,
+         icon: CursorIcon,
+-        scale: i32,
++        pixel_size: i32,
++        output_scale: i32,
+         cursor: &XCursor,
+         idx: usize,
+     ) -> MemoryRenderBuffer {
+         self.cache
+             .borrow_mut()
+-            .entry((icon, scale))
++            .entry((icon, pixel_size, output_scale))
+             .or_insert_with(|| {
+                 cursor
+                     .frames()
+@@ -256,7 +368,7 @@ impl CursorTextureCache {
+                             &frame.pixels_rgba,
+                             Fourcc::Argb8888,
+                             (frame.width as i32, frame.height as i32),
+-                            scale,
++                            output_scale,
+                             Transform::Normal,
+                             None,
+                         )
+diff --git a/src/cursor_scale.rs b/src/cursor_scale.rs
+new file mode 100644
+index 0000000000..3e215370ab
+--- /dev/null
++++ b/src/cursor_scale.rs
+@@ -0,0 +1,449 @@
++// Inspiration: https://invent.kde.org/plasma/kwin/-/blob/96bc84d33d2a5913bfec17b96686b5f4bb4e41c8/src/plugins/shakecursor/shakedetector.cpp
++//
++// This module implements cursor scaling based on shake detection, inspired by KDE's shake cursor
++// plugin. The algorithm detects when a user is "shaking" their mouse (moving it rapidly back and
++// forth) to temporarily enlarge the cursor, making it easier to locate on screen - similar to
++// macOS's cursor shake-to-find feature.
++//
++// The algorithm is elegant in its simplicity: it compares the actual distance traveled by the
++// cursor against the straight-line distance (diagonal of the bounding box) of the movement.
++//
++// Key insight: When you shake your mouse back and forth, you travel a long distance while staying
++// in a relatively small area. This creates a high ratio of path-length to bounding-box-diagonal.
++//
++// Example:
++// - Straight movement: distance ≈ diagonal, ratio ≈ 1.0 (no shake)
++// - Shake movement: distance >> diagonal, ratio > 2.0 (shake detected!)
++//
++// The algorithm maintains a history of cursor positions within a time window (400ms by default).
++// It optimizes this history by only adding new points when the direction changes - movements in
++// the same direction simply update the last point. This reduces noise and makes the calculation
++// more efficient while preserving the essence of the movement pattern.
++//
++// When the shake factor (distance/diagonal) exceeds the sensitivity threshold (2.0) and the
++// movement covers sufficient area (100px diagonal), the cursor smoothly animates to a larger size.
++// After a period of inactivity, it smoothly returns to normal size.
++
++use std::time::{Duration, Instant};
++
++use niri_config::{Animations, ShakeConfig};
++use smithay::utils::{Logical, Point};
++use tracing::{debug, trace};
++
++use crate::animation::{Animation, Clock};
++use crate::cursor::CursorManager;
++
++/// Tolerance in pixels for direction change detection.
++/// Movements smaller than this are considered direction-neutral.
++const TOLERANCE: f64 = 1.0;
++
++/// Behaviour modes for the shake feature.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum ShakeBehavior {
++    /// Keep the cursor enlarged while the pointer is moving; start decay when pointer stops.
++    HoldWhileMoving,
++    /// Start decay when the shake intensity decreases.
++    IntensityBased,
++}
++
++impl Default for ShakeBehavior {
++    fn default() -> Self {
++        ShakeBehavior::HoldWhileMoving
++    }
++}
++
++#[derive(Debug, Clone)]
++pub struct CursorScaleParams {
++    off: bool,
++    max_mult: f64,
++    shake_interval_ms: u64,
++    shake_sensitivity: f64,
++    min_diagonal: f64,
++    post_expand_delay_ms: u64,
++    cooldown_ms: u64,
++    behavior: ShakeBehavior,
++    stopped_threshold_ms: u64,
++    shake_relax_ms: u64,
++    expand_anim_config: niri_config::animations::CursorExpandAnim,
++    shrink_anim_config: niri_config::animations::CursorShrinkAnim,
++}
++
++impl CursorScaleParams {
++    pub fn from_config(config: ShakeConfig, animations: &Animations) -> Self {
++        Self {
++            off: config.off,
++            max_mult: config.max_multiplier,
++            shake_interval_ms: config.shake_interval_ms,
++            shake_sensitivity: config.sensitivity,
++            min_diagonal: config.min_diagonal,
++            post_expand_delay_ms: config.post_expand_delay_ms,
++            cooldown_ms: config.cooldown_ms.unwrap_or(400),
++            behavior: match config.behavior.as_deref() {
++                Some("intensity") => ShakeBehavior::IntensityBased,
++                _ => ShakeBehavior::HoldWhileMoving,
++            },
++            stopped_threshold_ms: config.stopped_threshold_ms.unwrap_or(50),
++            shake_relax_ms: config.shake_relax_ms.unwrap_or(150),
++            expand_anim_config: animations.cursor_expand,
++            shrink_anim_config: animations.cursor_shrink,
++        }
++    }
++}
++
++#[derive(Debug, Clone)]
++struct HistoryItem {
++    position: Point<f64, Logical>,
++    timestamp: Instant,
++}
++
++/// Tracks cursor movement and detects shake gestures to scale the cursor.
++#[derive(Debug)]
++pub struct CursorScaleTracker {
++    history: Vec<HistoryItem>,
++
++    last_motion_instant: Option<Instant>,
++    last_shake_factor: f64,
++
++    current_mult: f64,
++    expand_anim: Option<Animation>,
++    decay_anim: Option<Animation>,
++
++    last_expand_completed: Option<Instant>,
++    pending_decay_at: Option<Instant>,
++    cooldown_until: Option<Instant>,
++
++    relax_start: Option<Instant>,
++
++    params: CursorScaleParams,
++    clock: Clock,
++}
++
++/// Checks if two movement deltas have the same sign (direction).
++/// Movements smaller than TOLERANCE are considered direction-neutral.
++fn same_sign(a: f64, b: f64) -> bool {
++    (a >= -TOLERANCE && b >= -TOLERANCE) || (a <= TOLERANCE && b <= TOLERANCE)
++}
++
++impl CursorScaleTracker {
++    pub fn new(clock: Clock, params: CursorScaleParams) -> Self {
++        Self {
++            history: Vec::new(),
++            last_motion_instant: None,
++            last_shake_factor: 0.0,
++            current_mult: 1.0,
++            expand_anim: None,
++            decay_anim: None,
++            last_expand_completed: None,
++            pending_decay_at: None,
++            cooldown_until: None,
++            relax_start: None,
++            params,
++            clock,
++        }
++    }
++
++    pub fn reload(&mut self, params: CursorScaleParams) {
++        self.params = params;
++    }
++
++    /// Updates the tracker with a new cursor position.
++    pub fn on_motion(&mut self, pos: Point<f64, Logical>) {
++        if self.params.off {
++            return;
++        }
++        let now = Instant::now();
++
++        self.last_motion_instant = Some(now);
++
++        // Track motion history even during decay animation to prepare for next shake
++        let shake_interval = Duration::from_millis(self.params.shake_interval_ms);
++        self.history.retain(|item| now.duration_since(item.timestamp) < shake_interval);
++
++        // Update history with new position
++        if self.history.len() >= 2 {
++            let last_idx = self.history.len() - 1;
++            let last = &self.history[last_idx];
++            let prev = &self.history[last_idx - 1];
++
++            let same_x = same_sign(last.position.x - prev.position.x, pos.x - last.position.x);
++            let same_y = same_sign(last.position.y - prev.position.y, pos.y - last.position.y);
++
++            if same_x && same_y {
++                // Movement continues in the same direction: update the endpoint.
++                self.history[last_idx] = HistoryItem {
++                    position: pos,
++                    timestamp: now,
++                };
++            } else {
++                self.history.push(HistoryItem {
++                    position: pos,
++                    timestamp: now,
++                });
++            }
++        } else {
++            self.history.push(HistoryItem {
++                position: pos,
++                timestamp: now,
++            });
++        }
++
++        // If a decay animation (shrink) is already running, do not interrupt it.
++        if self.decay_anim.is_some() {
++            trace!("Motion during decay animation, not interrupting");
++            return;
++        }
++
++        // If an expansion animation is running, let it continue (but still track motion).
++        if self.expand_anim.is_some() {
++            trace!("Motion during expansion animation, continuing");
++            return;
++        }
++
++        // Need at least 2 points to calculate shake.
++        if self.history.len() < 2 {
++            return;
++        }
++
++        // Calculate bounding box and total path distance.
++        let mut left = self.history[0].position.x;
++        let mut top = self.history[0].position.y;
++        let mut right = self.history[0].position.x;
++        let mut bottom = self.history[0].position.y;
++        let mut distance = 0.0;
++
++        for i in 1..self.history.len() {
++            let delta_x = self.history[i].position.x - self.history[i - 1].position.x;
++            let delta_y = self.history[i].position.y - self.history[i - 1].position.y;
++            distance += (delta_x * delta_x + delta_y * delta_y).sqrt();
++
++            left = left.min(self.history[i].position.x);
++            top = top.min(self.history[i].position.y);
++            right = right.max(self.history[i].position.x);
++            bottom = bottom.max(self.history[i].position.y);
++        }
++
++        let bounds_width = right - left;
++        let bounds_height = bottom - top;
++        let diagonal = (bounds_width * bounds_width + bounds_height * bounds_height).sqrt();
++
++        // If movement area too small, treat as relaxed.
++        if diagonal < self.params.min_diagonal {
++            self.last_shake_factor = 0.0;
++            trace!("Movement area too small: diagonal={:.2}, min={:.2}", diagonal, self.params.min_diagonal);
++
++            // Intensity mode: start (or continue) relax timer.
++            if self.params.behavior == ShakeBehavior::IntensityBased && self.current_mult > 1.01 {
++                if self.relax_start.is_none() {
++                    self.relax_start = Some(now);
++                    debug!("Started relax timer (IntensityBased mode)");
++                }
++                // schedule decay only after sustained relaxation handled below
++            }
++
++            return;
++        }
++
++        let shake_factor = distance / diagonal;
++        self.last_shake_factor = shake_factor;
++        trace!("Shake factor: {:.2} (distance={:.2}, diagonal={:.2})", shake_factor, distance, diagonal);
++
++        // If we're in cooldown, do not start a new expansion.
++        if let Some(until) = self.cooldown_until {
++            if now < until {
++                trace!("In cooldown, ignoring shake");
++                // Also reset relax state because we're ignoring expansions during cooldown.
++                self.relax_start = None;
++                return;
++            }
++        }
++
++        // Expand if shake detected.
++        if shake_factor > self.params.shake_sensitivity {
++            debug!("Shake detected! Factor: {:.2} > sensitivity: {:.2}", shake_factor, self.params.shake_sensitivity);
++            // If we were relaxing, cancel it because shake resumed strongly.
++            self.relax_start = None;
++            // cooldown for repeated expansions
++            let cooldown_ok = if let Some(last) = self.last_expand_completed {
++                now.duration_since(last).as_millis() as u64 >= 100
++            } else {
++                true
++            };
++
++            if cooldown_ok {
++                debug!("Starting expansion animation: {:.2} -> {:.2}", self.current_mult, self.params.max_mult);
++                let anim = Animation::new(
++                    self.clock.clone(),
++                    self.current_mult,
++                    self.params.max_mult,
++                    0.0,
++                    self.params.expand_anim_config.0,
++                );
++                self.expand_anim = Some(anim);
++                // clear any previously scheduled pending decay
++                self.pending_decay_at = None;
++            } else {
++                trace!("Expansion blocked by cooldown");
++            }
++
++            self.history.clear();
++        } else {
++            // Relaxed (shake_factor <= sensitivity)
++            if self.params.behavior == ShakeBehavior::IntensityBased && self.current_mult > 1.01 {
++                // start or continue relax timer
++                if self.relax_start.is_none() {
++                    self.relax_start = Some(now);
++                    debug!("Started relax timer (shake factor below sensitivity)");
++                } else {
++                    // if relaxed long enough, schedule decay (if not already pending)
++                    let since = now.duration_since(self.relax_start.unwrap()).as_millis() as u64;
++                    if since >= self.params.shake_relax_ms && self.pending_decay_at.is_none() {
++                        debug!("Scheduling decay after {}ms of relaxation", since);
++                        self.pending_decay_at =
++                            Some(now + Duration::from_millis(self.params.post_expand_delay_ms));
++                    }
++                }
++            }
++            // For HoldWhileMoving we rely on the stop detection in advance_animations.
++        }
++    }
++
++    /// Advances animations and triggers decay according to configured behavior.
++    ///
++    /// Returns `true` if the cursor size changed (requires redraw).
++    /// Returns `true` if there are active or pending animations.
++    pub fn has_animations(&self) -> bool {
++        if self.params.off {
++            return false;
++        }
++
++        self.expand_anim.is_some()
++            || self.decay_anim.is_some()
++            || self.pending_decay_at.is_some()
++    }
++
++    pub fn advance_animations(&mut self, cursor_manager: &mut CursorManager) -> bool {
++        if self.params.off {
++            return false;
++        }
++        let now = Instant::now();
++        let mut changed = false;
++
++        if let Some(anim) = &self.expand_anim {
++            let value = anim.value();
++            if (self.current_mult - value).abs() > 0.001 {
++                self.current_mult = value;
++                cursor_manager.set_size_multiplier(self.current_mult as f32);
++                changed = true;
++            }
++
++            // When expansion finishes, record completion and (for HoldWhileMoving)
++            // we may start scheduling decay from motion state in the next step.
++            if anim.is_done() {
++                debug!("Expansion animation completed");
++                self.expand_anim = None;
++                self.last_expand_completed = Some(now);
++                // cancel any pending decay (we'll schedule based on behavior below)
++                self.pending_decay_at = None;
++                self.relax_start = None;
++            }
++
++            return changed;
++        }
++
++        if let Some(anim) = &self.decay_anim {
++            let value = anim.value();
++            if (self.current_mult - value).abs() > 0.001 {
++                self.current_mult = value;
++                cursor_manager.set_size_multiplier(self.current_mult as f32);
++                changed = true;
++            }
++
++            if anim.is_done() {
++                debug!("Decay animation completed, entering cooldown for {}ms", self.params.cooldown_ms);
++                self.decay_anim = None;
++                // mark cooldown so we don't immediately re-expand
++                self.cooldown_until = Some(now + Duration::from_millis(self.params.cooldown_ms));
++                if (self.current_mult - 1.0).abs() > 0.0001 {
++                    self.current_mult = 1.0;
++                    cursor_manager.set_size_multiplier(1.0);
++                    changed = true;
++                }
++            }
++
++            return changed;
++        }
++
++        if self.current_mult > 1.01 {
++            match self.params.behavior {
++                ShakeBehavior::HoldWhileMoving => {
++                    if let Some(last_motion) = self.last_motion_instant {
++                        let elapsed_ms = now.duration_since(last_motion).as_millis() as u64;
++                        if elapsed_ms >= self.params.stopped_threshold_ms {
++                            if self.pending_decay_at.is_none() {
++                                debug!("Pointer stopped for {}ms, scheduling decay (HoldWhileMoving)", elapsed_ms);
++                                self.pending_decay_at =
++                                    Some(now + Duration::from_millis(self.params.post_expand_delay_ms));
++                            }
++                        }
++                    }
++                }
++                ShakeBehavior::IntensityBased => {
++                    // If there is no recent motion, or we have a relax_start, compute whether relax
++                    // has been sustained long enough to schedule decay.
++                    if self.pending_decay_at.is_none() {
++                        // If we have an explicit relax_start from on_motion, honor it.
++                        if let Some(rs) = self.relax_start {
++                            let since = now.duration_since(rs).as_millis() as u64;
++                            if since >= self.params.shake_relax_ms {
++                                self.pending_decay_at =
++                                    Some(now + Duration::from_millis(self.params.post_expand_delay_ms));
++                            }
++                        } else if let Some(last_motion) = self.last_motion_instant {
++                            // No relax_start recorded: if there's been no motion and last_shake_factor is relaxed,
++                            // treat it as if relax_start happened at (now - stopped_threshold_ms).
++                            let elapsed_ms = now.duration_since(last_motion).as_millis() as u64;
++                            if elapsed_ms >= self.params.stopped_threshold_ms
++                                && self.last_shake_factor <= self.params.shake_sensitivity
++                            {
++                                // pretend relax started stopped_threshold_ms ago
++                                if self.params.shake_relax_ms <= elapsed_ms {
++                                    self.pending_decay_at =
++                                        Some(now + Duration::from_millis(self.params.post_expand_delay_ms));
++                                } else {
++                                    // start relax_start so future frames can count it
++                                    self.relax_start =
++                                        Some(now - Duration::from_millis(self.params.stopped_threshold_ms));
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++
++            // If a decay was scheduled and its time arrived, start it.
++            if let Some(at) = self.pending_decay_at {
++                if now >= at {
++                    debug!("Starting decay animation: {:.2} -> 1.0", self.current_mult);
++                    let anim = Animation::new(
++                        self.clock.clone(),
++                        self.current_mult,
++                        1.0,
++                        0.0,
++                        self.params.shrink_anim_config.0,
++                    );
++                    self.decay_anim = Some(anim);
++                    // clear pending and apply first frame
++                    self.pending_decay_at = None;
++                    let value = self.decay_anim.as_ref().unwrap().value();
++                    if (self.current_mult - value).abs() > 0.001 {
++                        self.current_mult = value;
++                        cursor_manager.set_size_multiplier(self.current_mult as f32);
++                        changed = true;
++                    }
++                }
++            }
++        }
++
++        changed
++    }
++}
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 3e673bdbfc..b0b5a0866f 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -2623,6 +2623,8 @@ impl State {
+ 
+         pointer.frame(self);
+ 
++        self.niri.cursor_scale_tracker.on_motion(pos);
++
+         // contents_under() will return no surface when the hot corner should trigger, so
+         // pointer.motion() will set the current focus to None.
+         if under.hot_corner && pointer.current_focus().is_none() {
+@@ -2710,6 +2712,8 @@ impl State {
+ 
+         pointer.frame(self);
+ 
++        self.niri.cursor_scale_tracker.on_motion(pos);
++
+         // contents_under() will return no surface when the hot corner should trigger, so
+         // pointer.motion() will set the current focus to None.
+         if under.hot_corner && pointer.current_focus().is_none() {
+diff --git a/src/lib.rs b/src/lib.rs
+index d5168386df..db5754b79f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,6 +7,7 @@ pub mod animation;
+ pub mod backend;
+ pub mod cli;
+ pub mod cursor;
++pub mod cursor_scale;
+ #[cfg(feature = "dbus")]
+ pub mod dbus;
+ pub mod frame_clock;
+diff --git a/src/niri.rs b/src/niri.rs
+index 190ef09d55..9c4630c1c3 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -118,6 +118,7 @@ use crate::animation::Clock;
+ use crate::backend::tty::SurfaceDmabufFeedback;
+ use crate::backend::{Backend, Headless, RenderResult, Tty, Winit};
+ use crate::cursor::{CursorManager, CursorTextureCache, RenderCursor, XCursor};
++use crate::cursor_scale::{CursorScaleParams, CursorScaleTracker};
+ #[cfg(feature = "dbus")]
+ use crate::dbus::freedesktop_locale1::Locale1ToNiri;
+ #[cfg(feature = "dbus")]
+@@ -337,6 +338,7 @@ pub struct Niri {
+     /// Most recent XKB settings from org.freedesktop.locale1.
+     pub xkb_from_locale1: Option<Xkb>,
+ 
++    pub cursor_scale_tracker: CursorScaleTracker,
+     pub cursor_manager: CursorManager,
+     pub cursor_texture_cache: CursorTextureCache,
+     pub cursor_shape_manager_state: CursorShapeManagerState,
+@@ -1482,6 +1484,9 @@ impl State {
+             self.niri
+                 .cursor_manager
+                 .reload(&config.cursor.xcursor_theme, config.cursor.xcursor_size);
++            self.niri.cursor_scale_tracker.reload(
++                CursorScaleParams::from_config(config.cursor.shake.clone(), &config.animations),
++            );
+             self.niri.cursor_texture_cache.clear();
+         }
+ 
+@@ -2398,6 +2403,10 @@ impl Niri {
+         seat.add_pointer();
+ 
+         let cursor_shape_manager_state = CursorShapeManagerState::new::<State>(&display_handle);
++        let cursor_scale_tracker = CursorScaleTracker::new(
++            animation_clock.clone(),
++            CursorScaleParams::from_config(config_.cursor.shake.clone(), &config_.animations),
++        );
+         let cursor_manager =
+             CursorManager::new(&config_.cursor.xcursor_theme, config_.cursor.xcursor_size);
+ 
+@@ -2572,6 +2581,7 @@ impl Niri {
+             cursor_manager,
+             cursor_texture_cache: Default::default(),
+             cursor_shape_manager_state,
++            cursor_scale_tracker,
+             dnd_icon: None,
+             pointer_contents: PointContents::default(),
+             pointer_visibility: PointerVisibility::Visible,
+@@ -3701,47 +3711,80 @@ impl Niri {
+ 
+         // Get the render cursor to draw.
+         let cursor_scale = output_scale.integer_scale();
+-        let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
++        let fractional_scale = output_scale.fractional_scale();
++        let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale, fractional_scale);
+ 
+-        let output_scale = Scale::from(output.current_scale().fractional_scale());
++        let output_scale = Scale::from(fractional_scale);
+ 
+         match render_cursor {
+             RenderCursor::Hidden => (),
+             RenderCursor::Surface { surface, hotspot } => {
+-                let pointer_pos =
++                let mult = self.cursor_manager.size_multiplier() as f64;
++                let surface_top_left =
+                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
+ 
+-                push_elements_from_surface_tree(
+-                    renderer,
+-                    &surface,
+-                    pointer_pos,
+-                    output_scale,
+-                    1.,
+-                    Kind::Cursor,
+-                    &mut |elem| push(elem.into()),
+-                );
++                if (mult - 1.0).abs() < 0.001 {
++                    push_elements_from_surface_tree(
++                        renderer,
++                        &surface,
++                        surface_top_left,
++                        output_scale,
++                        1.,
++                        Kind::Cursor,
++                        &mut |elem| push(elem.into()),
++                    );
++                } else {
++                    let anchor: Point<i32, Physical> =
++                        pointer_pos.to_physical_precise_round(output_scale);
++                    push_elements_from_surface_tree(
++                        renderer,
++                        &surface,
++                        surface_top_left,
++                        output_scale,
++                        1.,
++                        Kind::Cursor,
++                        &mut |elem| {
++                            let scaled = RescaleRenderElement::from_element(elem, anchor, mult);
++                            push(scaled.into());
++                        },
++                    );
++                }
+             }
+             RenderCursor::Named {
+                 icon,
+                 scale,
+                 cursor,
++                pixel_size,
++                rescale,
+             } => {
+                 let (idx, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
+                 let hotspot = XCursor::hotspot(frame).to_logical(scale);
+-                let pointer_pos =
++                let element_pos =
+                     (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
+ 
+-                let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
++                let texture = self
++                    .cursor_texture_cache
++                    .get(icon, pixel_size, scale, &cursor, idx);
+                 match MemoryRenderBufferRenderElement::from_buffer(
+                     renderer,
+-                    pointer_pos,
++                    element_pos,
+                     &texture,
+                     None,
+                     None,
+                     None,
+                     Kind::Cursor,
+                 ) {
+-                    Ok(element) => push(element.into()),
++                    Ok(element) => {
++                        if (rescale - 1.0).abs() < 0.001 {
++                            push(element.into());
++                        } else {
++                            let anchor: Point<i32, Physical> =
++                                pointer_pos.to_physical_precise_round(output_scale);
++                            let scaled =
++                                RescaleRenderElement::from_element(element, anchor, rescale);
++                            push(scaled.into());
++                        }
++                    }
+                     Err(err) => {
+                         warn!("error importing a cursor texture: {err:?}");
+                     }
+@@ -3849,7 +3892,21 @@ impl Niri {
+                 });
+ 
+                 let surface_pos = pointer_pos.to_i32_round() - hotspot;
+-                let bbox = bbox_from_surface_tree(surface, surface_pos);
++                let raw_bbox = bbox_from_surface_tree(surface, surface_pos);
++
++                // Expand bbox by the magnify multiplier around the hotspot so that overlap
++                // detection covers the scaled surface cursor.
++                let mult = self.cursor_manager.size_multiplier() as f64;
++                let bbox = if mult > 1.01 {
++                    let anchor: Point<i32, Logical> = pointer_pos.to_i32_round();
++                    let dx = ((raw_bbox.loc.x - anchor.x) as f64 * mult).round() as i32;
++                    let dy = ((raw_bbox.loc.y - anchor.y) as f64 * mult).round() as i32;
++                    let w = (raw_bbox.size.w as f64 * mult).round() as i32;
++                    let h = (raw_bbox.size.h as f64 * mult).round() as i32;
++                    Rectangle::new((anchor.x + dx, anchor.y + dy).into(), (w, h).into())
++                } else {
++                    raw_bbox
++                };
+ 
+                 let dnd = self
+                     .dnd_icon
+@@ -3933,15 +3990,15 @@ impl Niri {
+ 
+                     // The default cursor is rendered at the right scale for each output, which
+                     // means that it may have a different hotspot for each output.
+-                    let output_scale = output.current_scale().integer_scale();
++                    let output_scale = output.current_scale();
+                     let cursor = self
+                         .cursor_manager
+-                        .get_cursor_with_name(icon, output_scale)
+-                        .unwrap_or_else(|| self.cursor_manager.get_default_cursor(output_scale));
++                        .get_cursor_with_name(icon, output_scale.integer_scale(), output_scale.fractional_scale())
++                        .unwrap_or_else(|| self.cursor_manager.get_default_cursor(output_scale.integer_scale(), output_scale.fractional_scale()));
+ 
+                     // For simplicity, we always use frame 0 for this computation. Let's hope the
+                     // hotspot doesn't change between frames.
+-                    let hotspot = XCursor::hotspot(&cursor.frames()[0]).to_logical(output_scale);
++                    let hotspot = XCursor::hotspot(&cursor.frames()[0]).to_logical(output_scale.integer_scale());
+ 
+                     let surface_pos = pointer_pos.to_i32_round() - hotspot;
+                     let bbox = bbox_from_surface_tree(surface, surface_pos);
+@@ -4058,6 +4115,21 @@ impl Niri {
+         self.screenshot_ui.advance_animations();
+         self.window_mru_ui.advance_animations();
+ 
++        let cursor_changed = self
++            .cursor_scale_tracker
++            .advance_animations(&mut self.cursor_manager);
++
++        if cursor_changed {
++            // FIXME: can be more granular.
++            self.queue_redraw_all();
++        }
++
++        // Continue requesting redraws if cursor animations are pending
++        if self.cursor_scale_tracker.has_animations() {
++            // Schedule next frame by queuing a redraw
++            self.queue_redraw_all();
++        }
++
+         for state in self.output_state.values_mut() {
+             if let Some(transition) = &mut state.screen_transition {
+                 if transition.is_done() {
+@@ -6495,7 +6567,9 @@ fn scale_relocate_crop<E: Element>(
+ niri_render_elements! {
+     PointerRenderElements<R> => {
+         Wayland = WaylandSurfaceRenderElement<R>,
++        WaylandRescaled = RescaleRenderElement<WaylandSurfaceRenderElement<R>>,
+         NamedPointer = MemoryRenderBufferRenderElement<R>,
++        NamedPointerRescaled = RescaleRenderElement<MemoryRenderBufferRenderElement<R>>,
+     }
+ }
+ 

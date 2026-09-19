@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Nix SSH builder public host keys (base64-encoded public data)"
+regexTarget = "line"
+regexes = ['''^\s*publicHostKey = "[A-Za-z0-9+/=]+";\s*$''']

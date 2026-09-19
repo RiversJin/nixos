@@ -1,0 +1,35 @@
+diff --git a/src/SocketCore.cc b/src/SocketCore.cc
+index 68f5e8f4..2a11df9b 100644
+--- a/src/SocketCore.cc
++++ b/src/SocketCore.cc
+@@ -43,5 +43,6 @@
+ #include <cerrno>
+ #include <cstring>
+ #include <cassert>
++#include <algorithm>
+ #include <sstream>
+ #include <array>
+@@ -1397,6 +1398,23 @@ std::vector<SockAddr> SocketCore::getInterfaceAddress(const std::string& iface,
+     }
+   }
+ #endif // HAVE_GETIFADDRS
++
++  // getifaddrs(3) commonly returns an interface's IPv6 link-local address
++  // before its global address.  aria2 uses the first address of the requested
++  // family for listening sockets, so prefer a globally routable IPv6 address
++  // when both are present.  Keep IPv4 first so dual-stack outbound binding
++  // retains its existing behavior.
++  std::stable_sort(ifAddrs.begin(), ifAddrs.end(),
++                   [](const SockAddr& lhs, const SockAddr& rhs) {
++                     const auto rank = [](const SockAddr& addr) {
++                       if (addr.su.storage.ss_family == AF_INET) {
++                         return 0;
++                       }
++                       return IN6_IS_ADDR_LINKLOCAL(&addr.su.in6.sin6_addr) ? 2
++                                                                           : 1;
++                     };
++                     return rank(lhs) < rank(rhs);
++                   });
+   if (ifAddrs.empty()) {
+     addrinfo* res;
+     int s;

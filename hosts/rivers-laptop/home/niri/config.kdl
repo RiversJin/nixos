@@ -1,0 +1,164 @@
+input {
+    // Follow the pointer across monitors without scrolling partially visible columns.
+    focus-follows-mouse max-scroll-amount="0%"
+    keyboard {
+        xkb { layout "us"; }
+        numlock
+    }
+    touchpad { tap; natural-scroll; dwt; }
+}
+output "eDP-1" {
+    mode "1920x1200@60.003"
+    scale 1.0
+    focus-at-startup
+}
+layout {
+    gaps 14
+    center-focused-column "never"
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+    }
+    default-column-width { proportion 0.5; }
+    focus-ring {
+        width 1
+        active-color "#91b8ed99"
+        inactive-color "#344356"
+    }
+    border { off; }
+    shadow {
+        on
+        softness 24
+        spread 1
+        offset x=0 y=6
+        color "#00000055"
+    }
+    background-color "#101923"
+}
+prefer-no-csd
+overview {
+    zoom 0.42
+    workspace-shadow {
+        softness 40
+        spread 4
+        offset x=0 y=12
+        color "#00000055"
+    }
+}
+layer-rule {
+    match namespace="^noctalia-overview-"
+    place-within-backdrop true
+}
+cursor {
+    xcursor-theme "breeze_cursors"
+    xcursor-size 24
+}
+window-rule {
+    geometry-corner-radius 8
+    clip-to-geometry true
+}
+window-rule {
+    match app-id=r#"^org\.wezfurlong\.wezterm$"#
+    default-column-width {}
+}
+// Frosted backgrounds; preserve application text opacity.
+blur {
+    passes 2
+    offset 4.0
+    noise 0.015
+    saturation 1.2
+}
+window-rule {
+    match app-id=r#"^(kitty|com\.mitchellh\.ghostty|org\.wezfurlong\.wezterm)$"#
+    draw-border-with-background false
+    background-effect { blur true; }
+}
+layer-rule {
+    match namespace="^waybar$"
+    background-effect { blur true; }
+}
+layer-rule {
+    match namespace="^launcher$"
+    geometry-corner-radius 8
+    background-effect { blur true; }
+}
+layer-rule {
+    match namespace="^notifications$"
+    background-effect { blur true; xray false; }
+}
+// The launcher should blur the windows directly underneath, not reveal wallpaper.
+layer-rule {
+    match namespace="^rofi$"
+    geometry-corner-radius 8
+    background-effect { blur true; xray false; }
+}
+layer-rule {
+    match namespace="^niri-controls$"
+    geometry-corner-radius 18
+    background-effect { blur true; xray false; }
+}
+window-rule {
+    match app-id=r#"firefox$"# title="^Picture-in-Picture$"
+    open-floating true
+}
+window-rule {
+    match app-id=r#"^org\.keepassxc\.KeePassXC$"#
+    match app-id=r#"^org\.gnome\.World\.Secrets$"#
+    block-out-from "screen-capture"
+}
+spawn-at-startup "systemctl" "--user" "start" "niri-desktop.target"
+screenshot-path "~/Pictures/Screenshots/%Y-%m-%d_%H-%M-%S.png"
+binds {
+    Alt+Space repeat=false hotkey-overlay-title="应用启动器" { spawn "noctalia-shell" "ipc" "call" "launcher" "toggle"; }
+    Super+L repeat=false hotkey-overlay-title="锁屏" { spawn "swaylock" "-f"; }
+    // Super+Space belongs to Fcitx5. Super+C/V belong to xremap.
+    Mod+Return { spawn "kitty"; }
+    XF86MonBrightnessUp allow-when-locked=true { spawn "brightnessctl" "--class=backlight" "set" "+5%"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn "brightnessctl" "--class=backlight" "--min-value=1" "set" "5%-"; }
+    XF86AudioMicMute allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle"; }
+    Mod+Left { focus-column-left; }
+    Mod+Right { focus-column-right; }
+    Mod+Up { focus-window-up; }
+    Mod+Down { focus-window-down; }
+    Mod+Shift+Left { move-column-left; }
+    Mod+Shift+Right { move-column-right; }
+    Mod+Shift+Up { move-window-up; }
+    Mod+Shift+Down { move-window-down; }
+    Mod+Page_Up { focus-workspace-up; }
+    Mod+Page_Down { focus-workspace-down; }
+    Mod+Ctrl+Up { focus-monitor-up; }
+    Mod+Ctrl+Down { focus-monitor-down; }
+    Mod+Ctrl+Shift+Up { move-window-to-monitor-up; }
+    Mod+Ctrl+Shift+Down { move-window-to-monitor-down; }
+    Mod+W { toggle-overview; }
+    Mod+R { switch-preset-column-width; }
+    Mod+F { maximize-column; }
+    Mod+Shift+F { fullscreen-window; }
+    Mod+Shift+V { toggle-window-floating; }
+    Alt+F4 { close-window; }
+    Mod+Q repeat=false hotkey-overlay-title="关闭当前窗口" { close-window; }
+    Mod+Shift+Q repeat=false hotkey-overlay-title="强制结束当前窗口进程" { spawn "niri-force-close"; }
+    Print { screenshot; }
+    Shift+Print hotkey-overlay-title="截图并标注" { spawn "niri-screenshot-annotate"; }
+    Mod+Shift+Slash { show-hotkey-overlay; }
+    Mod+Shift+E { quit; }
+    XF86AudioRaiseVolume allow-when-locked=true { spawn "wpctl" "set-volume" "-l" "1.0" "@DEFAULT_AUDIO_SINK@" "5%+"; }
+    XF86AudioLowerVolume allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "5%-"; }
+    XF86AudioMute allow-when-locked=true { spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle"; }
+    XF86AudioPlay { spawn "playerctl" "play-pause"; }
+    XF86AudioNext { spawn "playerctl" "next"; }
+    XF86AudioPrev { spawn "playerctl" "previous"; }
+}
+
+// Keep protocol-provided blur shapes; blur the actual windows underneath.
+layer-rule {
+    match namespace="^noctalia-background-"
+    background-effect { xray false; }
+}
+
+// Keep the screenshot annotation editor floating.
+window-rule {
+    match app-id=r#"^com\.gabm\.satty$"#
+    open-floating true
+}

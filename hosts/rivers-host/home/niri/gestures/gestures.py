@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+# from tkinter import *
+import subprocess, pathlib, shlex
+import threading
+import queue
+import time
+import os
+import errno
+import sys
+import struct
+import select
+import fcntl
+import json
+from math import tan
+from math import pi
+DEBUG = 0 # variable to enable debug mode
+TYPE = [] # types that are printed. valid ones ["angle", "slot", "gesture"]
+STOP = False # don't execute gestures, useful for debugging
+
+TOUCHPAD_CALIBRATION = 1 # scaling down for touchpad movements
+TOUCHSCREEN_CALIBRATION = 2 # scaling down for touchscreen movements
+
+DECISION = 90 # sufficient movement to make decision on direction, scaled by the number of slots
+PINCH_DECISION = 160 #seems like x_cum and y_cum should got to around 0 if fingers moved symmetrically in or out  #sufficient momvent to make pinch
+
+ANGLE_X = 20 # angle to interpret as horizontal
+ANGLE_Y = 20 # angle to interpret as vertical
+
+DEBOUNCE = 0.02  #sleep for 10 ms(now 40 ms), fastest tap around 25 ms, gotten from new_touch, touchpad data. in practice works well.
+THRESHOLD_SQUARED = 10 # threshold to be considered a move, squared sum of x and y
+PINCH_THRESHOLD = 100
+
+REP_THRES = 0.2 #need to break this TIME before REP engages
+REP_DAG = 250 # REP on diagonal movement
+REP_DAG_DEF = 250 # REP on diagonal movement
+REP = 150 # REP for horizontal or veritical movement
+REP_DEF = 150 # REP for horizontal or veritical movement
+PINCH_REP = 40
+PINCH_REP_DEF = 40
+
+DEADZONE_SQUARED = 1000 # deadzone where up until this, pinches aren't interpreted
+all_gestures = json.loads(pathlib.Path(os.environ["NIRI_GESTURE_CONFIG"]).read_text())
+
+# Linux input event constants
+# Event types
+EV_SYN = 0x00
+EV_KEY = 0x01
+EV_ABS = 0x03
+
+# Event codes for multitouch
+ABS_MT_SLOT = 0x2f        # 47 - Active slot being modified
+ABS_MT_POSITION_X = 0x35  # 53 - X position
+ABS_MT_POSITION_Y = 0x36  # 54 - Y position
+ABS_MT_TRACKING_ID = 0x39 # 57 - Unique ID of initiated contact
+
+# Event structure format: long + long + unsigned short + unsigned short + unsigned int
+FORMAT = 'llHHi'
+EVENT_SIZE = struct.calcsize(FORMAT)
+
+def try_or_set(expression, val, gestures=False):
+    try:
+        return eval(expression);
+    except Exception:
+        return val;
+
+def print(*s):
+    """redefine print to print only when debug is on."""
+    if (DEBUG and (s[-1] in TYPE or not TYPE)):
+        __builtins__.print(s)
+
+# generic gesture worker
+class Worker(threading.Thread):
+
+    """ A worker thread that takes directory names from a queue, finds all
+        files in them recursively and reports the result.
+
+        Input is done by placing directory names (as strings) into the
+        Queue passed in dir_q.
+
+        Output is done by placing tuples into the Queue passed in result_q.
+        Each tuple is (thread name, dirname, [list of files]).
+
+        Ask the thread to stop by calling its join() method.
+    """
+    def __init__(self, q, gestures):
+        super(Worker, self).__init__()
+        self.q = q
+        self.status = {} #slots :   {"x" :x , "y" : y}
+        self.status_dis = 0
+        self.debounce = 0
+        self.gestures = gestures
+        self.gesture_queue = []
+        self.rep_start = 0
+        self.pinch = True;
+        self.last_command_is_gesture_end = False
+        self.pinch_deadzone_enabled = try_or_set("all_gestures[\"pinch_deadzone_enabled\"] == \"True\" ",True)
+        self.pinch_deadzone_enabled = try_or_set("gestures[\"pinch_deadzone_enabled\"] == \"True\" ", self.pinch_deadzone_enabled, gestures=gestures)
+        print(f"Pinch deadzone is enabled: {self.pinch_deadzone_enabled}.")
+        self.gesture = {"type": None, "total": {"x-cum": 0, "y-cum": 0, "moved": 0, "dis-cum": 0} , "slots" : {}} # keys: type, moved, slot (1-9), total ; slot and total keys: x-cum, y-cum, moved, dis-cum
+
+    def run(self):
+        # As long as we weren't asked to stop, try to take new tasks from the
+        # queue. The tasks are taken with a blocking 'get', so no CPU
+        # cycles are wasted while waiting.
+        # Also, 'get' is given a timeout, so stoprequest is always checked,
+        # even if there's nothing in the queue.
+        while True:
+            # get messages(dequeue from message queue) and do approperate action
+            event = self.q.get(True)
+            print("")
+            print("Worker")
+            print(f"def: {event}")
+            print("")
+
+            self.__getattribute__(event["type"])(event);
+
+            # dequeue from gesture queue and execute after debounce times out
+            if(len(self.gesture_queue) != 0 and float(event["time"]) - self.debounce >= DEBOUNCE):
+                for gesture in self.gesture_queue:
+                    try:
+                        if(gesture and not STOP):
+                            subprocess.call(gesture);
+                    except:
+                        print("error with:")
+                        print("gesture = ", gesture)
+                        print("gesture queue = ", self.gesture_queue)
+                        print("gesture information = ", self.gesture)
+
+
+                self.gesture_queue = [];
+
+
+
+    def finger_start(self, event):
+        """ append new finger to gesture.
+        """
+        ## restart debounce
+        self.last_command_is_gesture_end = False;
+        self.debounce = float(event["time"]);
+
+        ## restart gesture params
+        slots = self.gesture["slots"];
+        self.gesture = {"type": None,  "total": {"x-cum": 0, "y-cum": 0, "moved" : 0, "dis-cum": 0},  "slots" : {} } # keys: type, moved, slot (1-9), total ; slot and total keys: x-cum, y-cum
+        for key in slots:
+            self.gesture["slots"][key] = {"x-cum": 0, "y-cum": 0, "moved": 0};
+
+        #  initiate state for finger
+        slot = event["slot"];
+
+        self.gesture["slots"][slot] = {}
+        self.gesture["slots"][slot]["x-cum"] = 0
+        self.gesture["slots"][slot]["y-cum"] = 0
+        self.gesture["slots"][slot]["moved"] = 0
+
+        self.update_status(slot, event[slot], 0); #need to wait until status updated before calcing max_dis
+        max_dis =  self.max_distance();
+        self.status_dis =  max_dis;
+
+    def finger_update(self, event):
+        """ Update started gesture
+        """
+        # update state for updated finger
+        self.last_command_is_gesture_end = False;
+        slot = event["slot"];
+
+        # gesture must be updated before status because need to capture difference between last and now
+        self.gesture["slots"][slot]["x-cum"] +=  event[slot]["x"] - self.status[slot]["x"]
+        self.gesture["slots"][slot]["y-cum"] += event[slot]["y"] - self.status[slot]["y"]
+
+        self.gesture["total"]["x-cum"] += event[slot]["x"] - self.status[slot]["x"]
+        self.gesture["total"]["y-cum"] += event[slot]["y"] - self.status[slot]["y"]
+
+        max_dis =  self.max_distance();
+        self.gesture["total"]["dis-cum"] += max_dis - self.status_dis;
+
+
+        self.update_status(slot, event[slot],max_dis);
+
+        print(f"gesture = {self.gesture}", "gesture");
+
+        # pick which type of guesture is currenlty executing after all fingures have been verified
+        no_slots = len(self.gesture["slots"]);
+        if (not self.gesture["slots"][slot]["moved"]):
+            if(no_slots >= 1):
+                print(f"gesture = {self.gesture}", "slot");
+                print(f'slot_moved =  {self.gesture["slots"][slot]["y-cum"] ** 2 + self.gesture["slots"][slot]["x-cum"] ** 2 > THRESHOLD_SQUARED}', "slot");
+            self.gesture["slots"][slot]["moved"] = self.gesture["slots"][slot]["y-cum"] ** 2 + self.gesture["slots"][slot]["x-cum"] ** 2 > THRESHOLD_SQUARED
+            self.gesture["total"]["moved"] += self.gesture["slots"][slot]["moved"];
+
+        if (not self.gesture["type"]):
+            # pinch
+            if(self.gesture["total"]["moved"] >= 1 and self.pinch):# engage pinch gesture when only one finger is moving
+                x_cum = abs(self.gesture["total"]["x-cum"]);
+                y_cum = abs(self.gesture["total"]["y-cum"]);
+                dis_cum =  self.gesture["total"]["dis-cum"];
+
+                if(no_slots in (2, 5)):
+                    print(f"dis_cum = {dis_cum}")
+                    print(f"x_cum + y_cum = {x_cum + y_cum}")
+                    print(f"x_cum = {x_cum}")
+                    print(f"y_cum = {y_cum}")
+                    if(no_slots == 2 and x_cum + y_cum > PINCH_DECISION): #small hack to stop pinch from interpreting scrolling
+                        self.pinch = False;
+                    if(abs(dis_cum) > PINCH_THRESHOLD and
+                        ((not self.pinch_deadzone_enabled) or self.out_of_deadzone())): # added deadzone
+                        self.gesture["type"] = GestureCommands(type = "pinch", fingers = str(no_slots), event = "start");
+                        if(dis_cum < 0): #pinch in
+                            self.gesture["type"].direction = 'i';
+                        else: #pinch out
+                            self.gesture["type"].direction = 'o';
+                        self.enqueue();
+                        self.rep_start = float(event["time"]);
+
+            # swipe
+            if(no_slots == self.gesture["total"]["moved"]):
+                x_cum = abs(self.gesture["total"]["x-cum"]);
+                y_cum = abs(self.gesture["total"]["y-cum"]);
+                dis_cum =  self.gesture["total"]["dis-cum"];
+                if(no_slots >= 3 ):
+                    print(f"decision = {x_cum  ** 2 + y_cum ** 2 > (no_slots * DECISION) ** 2}, {x_cum  ** 2} + {y_cum ** 2} > {(no_slots * DECISION) ** 2} ", "angle");
+                    if (x_cum  ** 2 + y_cum ** 2 > (no_slots * DECISION) ** 2):
+                        print(f"x_cum = {x_cum}", "angle")
+                        print(f"y_cum = {y_cum}", "angle")
+                        print(f"horz {y_cum <= x_cum * tan(ANGLE_X * pi/180)},  {y_cum} <= {x_cum * tan(ANGLE_X * pi/180)}", "angle")
+                        print(f"vert {y_cum >= x_cum * tan((90 - ANGLE_Y) * pi/180)}, {y_cum} >= {x_cum * tan((90 - ANGLE_Y) * pi/180)}", "angle")
+                        print(f"self.gesture = {self.gesture}", "angle")
+                        self.gesture["type"] = GestureCommands(type = "swipe", fingers = str(no_slots), event = "start");
+                        self.rep_start = float(event["time"]);
+                        if(y_cum <= x_cum * tan((ANGLE_X) * pi/180)):
+                            if(self.gesture["total"]["x-cum"] <= 0) :
+                                self.gesture["type"].direction = "l";
+                            else :
+                                self.gesture["type"].direction = "r";
+                        elif (y_cum >= x_cum * tan((90 - ANGLE_Y) * pi/180)):
+                            if(self.gesture["total"]["y-cum"] <= 0) :
+                                self.gesture["type"].direction = "u";
+                            else:
+                                self.gesture["type"].direction = "d";
+                        else: #(y_cum > x_cum * tan((90 - ANGLE_Y - CLEARANCE) * pi/180) and y_cum < x_cum * tan((ANGLE_X + CLEARANCE) * pi/180)):
+                            x_cum = self.gesture["total"]["x-cum"];
+                            y_cum = self.gesture["total"]["y-cum"];
+                            if(x_cum * y_cum > 0): #left up, right down
+                                if(x_cum <= 0 and y_cum < 0): #left up
+                                    self.gesture["type"].direction = "lu";
+                                if(x_cum > 0 and y_cum >= 0): #right down
+                                    self.gesture["type"].direction = "rd";
+                            if(x_cum * y_cum < 0): #right up, right down
+                                if(x_cum >= 0 and y_cum < 0): #right up
+                                    self.gesture["type"].direction = "ru";
+                                if(x_cum < 0 and y_cum >= 0): #left down
+                                    self.gesture["type"].direction = "ld";
+
+                        self.enqueue();
+                        # reset because don't want to trigger again in
+                        self.gesture["total"]["x-cum"] = 0;
+                        self.gesture["total"]["y-cum"] = 0;
+                        self.gesture["total"]["dis-cum"] = 0;
+        # enqueue gesture to run
+        else:
+            if(float(event["time"]) - self.rep_start < REP_THRES): # to remove extra movement caused by movement before RE_THRES has been crossed
+                self.gesture["total"]["x-cum"] = 0;
+                self.gesture["total"]["y-cum"] = 0;
+                self.gesture["total"]["dis-cum"] = 0;
+            else:
+                dis_cum =  self.gesture["total"]["dis-cum"];
+                self.gesture["type"].event = "update";
+                if(self.gesture["type"].type == "pinch"):
+                   PINCH_REP = self.getRep(PINCH_REP_DEF)
+                   if(abs(dis_cum) > PINCH_REP):
+                       if(dis_cum < 0): #pinch in
+                           self.gesture["type"].update_direction = 'i';
+                       else: #pinch out
+                           self.gesture["type"].update_direction = 'o';
+                       self.enqueue()
+                       self.gesture["total"]["dis-cum"] = 0;
+
+                elif(self.gesture["type"].type == "swipe"):
+                    if(self.gesture["type"].direction in ['l', 'r', 'u', 'd']):
+                        # better to zero out after a gesture is triggered
+                        REP = self.getRep(REP_DEF)
+                        if(self.gesture["total"]["x-cum"] >= REP):
+                            self.gesture["type"].update_direction = 'r';
+                            self.enqueue()
+                            self.gesture["total"]["x-cum"] = 0
+                        elif(self.gesture["total"]["x-cum"] <= -REP):
+                            self.gesture["type"].update_direction = 'l';
+                            self.enqueue()
+                            self.gesture["total"]["x-cum"] = 0
+                        # y is measured positive when moving down the touchpad
+                        elif(self.gesture["total"]["y-cum"] >= REP):
+                            self.gesture["type"].update_direction = 'd';
+                            self.enqueue()
+                            self.gesture["total"]["y-cum"] = 0;
+                        elif(self.gesture["total"]["y-cum"] <= -REP):
+                            self.gesture["type"].update_direction = 'u';
+                            self.enqueue()
+                            self.gesture["total"]["y-cum"] = 0;
+
+                    elif(self.gesture["type"].direction in ['lu', 'rd', 'ld', 'ru']):
+                        REP_DAG = self.getRep(REP_DAG_DEF)
+                        if(self.gesture["total"]["x-cum"] +  self.gesture["total"]["y-cum"] >= REP_DAG):
+                            self.gesture["type"].update_direction = 'rd';
+                            self.enqueue()
+                            self.gesture["total"]["x-cum"] = 0; #better to zero out
+                            self.gesture["total"]["y-cum"] = 0;
+                        elif(self.gesture["total"]["x-cum"] + self.gesture["total"]["y-cum"]  <=  -REP_DAG):
+                            self.gesture["type"].update_direction = 'lu';
+                            self.enqueue()
+                            self.gesture["total"]["x-cum"] = 0; #better to zero out
+                            self.gesture["total"]["y-cum"] = 0;
+                        elif(self.gesture["total"]["x-cum"] -  self.gesture["total"]["y-cum"] >= REP_DAG):
+                            self.gesture["type"].update_direction = 'ru';
+                            self.enqueue()
+                            self.gesture["total"]["x-cum"] = 0; #better to zero out
+                            self.gesture["total"]["y-cum"] = 0;
+                        elif(self.gesture["total"]["x-cum"] - self.gesture["total"]["y-cum"]  <=  -REP_DAG):
+                            self.gesture["type"].update_direction = 'ld';
+                            self.enqueue()
+                            self.gesture["total"]["x-cum"] = 0; #better to zero out
+                            self.gesture["total"]["y-cum"] = 0;
+
+    def gesture_end(self, clock):
+        """ end started gesture and reset gesture.
+        """
+        # signify end of a started gesture
+        self.gesture_queue = [];
+        x_cum = self.gesture["total"]["x-cum"];
+        y_cum = self.gesture["total"]["y-cum"];
+        no_slots = len(self.gesture["slots"]);
+        print("")
+        print("Worker")
+        print(self.gesture);
+        print(f"float(clock) - self.debounce >= DEBOUNCE : {float(clock)} - {self.debounce} >= {DEBOUNCE} : {float(clock) - self.debounce >= DEBOUNCE} ");
+        print("")
+
+        if (float(clock) - self.debounce >= DEBOUNCE):
+            if(self.gesture["type"]):
+                self.gesture["type"].event = "end";
+                self.enqueue()
+            else:
+              if(no_slots >= 3):
+                  self.gesture["type"] = GestureCommands(type = "swipe", fingers = str(no_slots), direction = "t");
+                  self.enqueue()
+
+        for gesture in self.gesture_queue:
+            try:
+                if(gesture and not STOP):
+                    if (no_slots == 5):
+                        subprocess.Popen(gesture);
+                    else:
+                        subprocess.call(gesture);
+            except:
+                print("error with:")
+                print("gesture = ", gesture)
+                print("gesture queue = ", self.gesture_queue)
+                print("gesture information = ", self.gesture)
+
+        ## reset parameters
+        self.gesture_queue = [];
+        self.pinch = True;
+
+        # restart debounce
+        self.debounce = float(clock);
+
+        # restart gesture params
+        slots = self.gesture["slots"];
+        self.gesture = {"type": None, "total": {"x-cum": 0, "y-cum": 0, "moved" : 0, "dis-cum": 0}, "slots" : {} } # keys: type, moved, slot (1-9), total ; slot and total keys: x-cum, y-cum
+        for key in slots:
+            self.gesture["slots"][key] = {"x-cum": 0, "y-cum": 0, "moved": 0};
+
+
+
+    def finger_remove(self, event):
+        """remove status and gesture of removed finger.
+        """
+
+        # execute tap based gesture if any other gesture had not been started
+        if not self.last_command_is_gesture_end:
+            self.last_command_is_gesture_end = True;
+            if(len(self.gesture_queue) == 0 and float(event["time"]) - self.debounce >= DEBOUNCE):
+                # do tap gesture according to finger
+                pass;
+
+            # end gesture
+            self.gesture_end(event["time"]);
+
+        # update state
+        removed_slot = event["removed_slot"];
+
+        if(removed_slot in self.status ): #need this because not updating status when finger added (finger is on touchpad) but after finger starts (both x and y are valid)
+            del self.status[removed_slot];
+            del self.gesture["slots"][removed_slot];
+
+        self.status_dis = self.max_distance();
+
+
+    def enqueue(self):
+        structure = self.gesture["type"];
+        try:
+            if(structure):
+                if structure.direction == 't':
+                    self.gesture_queue.extend(map(lambda x: shlex.split(x), self.gestures[structure.type][structure.fingers][structure.direction]));
+                elif structure.event == 'update':
+                    self.gesture_queue.extend(map(lambda x: shlex.split(x), self.gestures[structure.type][structure.fingers][structure.direction][structure.event][structure.update_direction]));
+                else:
+                    self.gesture_queue.extend(map(lambda x: shlex.split(x), self.gestures[structure.type][structure.fingers][structure.direction][structure.event]));
+        except Exception:
+            print("Gesture recognized but not configured.")
+
+    def update_status(self, slot, new_state, max_dis):
+        self.status[slot] = new_state;
+        self.status_dis = max_dis;
+
+    def getRep(self, default):
+        structure = self.gesture["type"];
+        try:
+            rep =  self.gestures[structure.type][structure.fingers][structure.direction]["rep"];
+            if type(rep) == int:
+                return rep
+            else:
+                raise Exception
+        except Exception:
+            return default
+
+    def max_distance(self):
+        #return max distance between fingers
+        # Early return if we have fewer than 2 fingers
+        if len(self.status) < 2:
+            return 0
+
+        max_dis = 0
+        for fin1 in self.status:
+            for fin2 in self.status:
+                cur_dis = round(((self.status[fin1]["x"] - self.status[fin2]["x"])**2 + (self.status[fin1]["y"] - self.status[fin2]["y"])**2) ** (1/2))
+                max_dis = max(max_dis, cur_dis)
+        return max_dis;
+
+    def out_of_deadzone(self):
+        """check if out of deadzone."""
+        are_all_fin_out_of_deadzone = True;
+        for fin in self.status:
+           fin_move = self.gesture["slots"][fin]["y-cum"] ** 2 + self.gesture["slots"][fin]["x-cum"] ** 2
+           print(fin_move)
+           is_fin_out_of_deadzone = fin_move > DEADZONE_SQUARED
+           are_all_fin_out_of_deadzone = are_all_fin_out_of_deadzone and is_fin_out_of_deadzone
+        return are_all_fin_out_of_deadzone
+
+class GestureCommands():
+    def __init__(self, **kwargs):
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+
+    def set(self, **kwargs):
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+    def __str__(self):
+        if "type" in self.__dict__.keys():
+            return self.type;
+    def __repr__(self):
+        return self.type;
+
+# define and start gestures
+def main():
+    gesture_sources = [["TOUCHPAD", [], TOUCHPAD_CALIBRATION], ["TOUCHSCREEN", [], TOUCHSCREEN_CALIBRATION]]
+    mice_items = subprocess.getoutput("cat /proc/bus/input/devices | grep -iEB 2 Handlers=.*mouse").split("--")
+    mice_items[0] = "\n"+ mice_items[0]
+    print(f"mice_items = {mice_items}")
+    for gesture_source in gesture_sources:
+        for i in mice_items:
+            item = i.split("\n")
+            print(f"item = {item}")
+            dev_path = item[1].split("=")[1]
+            b = subprocess.getoutput(" udevadm test-builtin input_id" + " " + dev_path + f"| grep -c {gesture_source[0]}")[-1]
+            if int(b):
+                device_tags = item[3].split("=")[1].split(" ")
+                device_event_name = list(filter(lambda x: "event" in x, device_tags))[0]
+                gesture_source[1].append(device_event_name)
+                threading.Thread(target=test, args=[device_event_name, gesture_source[2], gesture_source[0].lower()]).start() #change here to use evemu-record
+        print(f"Handlers for " + gesture_source[0] + f": {gesture_source[1]}")
+    return 1;
+
+def test(device_event_name, factor, dev):
+    #make sure to start with a single finger when the base re-attaches because slot and tracking id won't fire before position
+    status_dict = {"0":{"x_updated": 0, "y_updated": 0}, "1":{"x_updated": 0, "y_updated": 0}, "2": {"x_updated": 0, "y_updated": 0}, "3":{"x_updated": 0, "y_updated": 0}, "4": {"x_updated": 0, "y_updated": 0}} #when the touchpad is restarted issues arise because (ABS_MT_TRACKING_ID), isn't called before x or y , this solve
+    slot = "0"
+    update = False
+
+    # queue and worker
+    q = queue.Queue()
+    w = Worker(q, all_gestures[dev])
+    w.start()
+
+    # Orientation setup
+    orientation = "normal"
+    orientation_y = -1 if("inverted" == orientation or "right" == orientation) else 1
+    orientation_x = -1 if("inverted" == orientation or "left" == orientation) else 1
+    swap_x_y = True if("right" == orientation or "left" == orientation) else False
+
+    # Open the device file directly
+    device_path = f"/dev/input/{device_event_name}"
+    try:
+        fd = open(device_path, "rb", buffering=0)
+
+        fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
+
+        # Set up polling for efficient reading
+        poll_obj = select.poll()
+        poll_obj.register(fd, select.POLLIN)
+
+        while True:
+            # Block until we have an event.
+            events = poll_obj.poll()
+            if not events:
+                continue
+            if any(mask & (select.POLLERR | select.POLLHUP | select.POLLNVAL)
+                   for _, mask in events):
+                sys.stderr.write("Touchpad disconnected; restarting device discovery\n")
+                os._exit(1)
+
+            try:
+                event_data = fd.read(EVENT_SIZE)
+
+                # If we couldn't read a complete event, continue
+                if event_data is None:
+                    continue  # Nonblocking read has no data yet.
+                if not event_data:
+                    os._exit(1)  # Re-discover the device after disconnect.
+                if len(event_data) != EVENT_SIZE:
+                    continue
+
+                # Unpack the event data
+                sec, usec, ev_type, ev_code, ev_value = struct.unpack(FORMAT, event_data)
+
+                # Format time like evtest does
+                time_str = f"{sec}.{usec:06d}"
+
+                # Only process relevant event types
+                if ev_type != EV_ABS:
+                    continue
+
+                # Process tracking ID events
+                if ev_code == ABS_MT_TRACKING_ID:
+                    if ev_value == -1 or ev_value == 0xffffffff:  # -1 in unsigned 32-bit
+                        try:
+                            del status_dict[slot]
+                        except KeyError:
+                            pass
+
+                        # Notify worker to flush queue after finger is removed
+                        q.put({"type": "finger_remove", "removed_slot": slot, "time": time_str})
+                        slot = "-1"
+                    else:
+                        if slot == "-1":
+                            slot = "0"
+                        status_dict[slot] = {"x_updated": 0, "y_updated": 0}
+
+                # Process slot change events
+                elif ev_code == ABS_MT_SLOT:
+                    slot = str(ev_value)
+                    if slot not in status_dict:
+                        status_dict[slot] = {"x_updated": 0, "y_updated": 0}
+
+                # Process X position events
+                elif ev_code == ABS_MT_POSITION_X:
+                    if slot != "-1":
+                        if swap_x_y:
+                            status_dict[slot]["y"] = float(ev_value) / factor * orientation_y
+                            status_dict[slot]["y_updated"] += 1
+                        else:
+                            status_dict[slot]["x"] = float(ev_value) / factor * orientation_x
+                            status_dict[slot]["x_updated"] += 1
+                        update = True
+
+                # Process Y position events
+                elif ev_code == ABS_MT_POSITION_Y:
+                    if slot != "-1":
+                        if swap_x_y:
+                            status_dict[slot]["x"] = float(ev_value) / factor * orientation_x
+                            status_dict[slot]["x_updated"] += 1
+                        else:
+                            status_dict[slot]["y"] = float(ev_value) / factor * orientation_y
+                            status_dict[slot]["y_updated"] += 1
+                        update = True
+
+                print("")
+                print(f"update: {update}")
+                print(f"slot: {slot}")
+                print(f"status_dict: {status_dict}")
+                print("")
+
+                if update:
+                    if status_dict[slot]["x_updated"] < 1 or status_dict[slot]["y_updated"] < 1:
+                        update = False
+                        continue
+
+                    x = status_dict[slot]["x"]
+                    y = status_dict[slot]["y"]
+
+                    if "objs" not in status_dict[slot]:
+                        status_dict[slot]["objs"] = True
+                        finger_type = "finger_start"
+                    else:
+                        finger_type = "finger_update"
+
+                    update = False
+                    q.put({"type": finger_type, "slot": slot, "time": time_str, slot: {"x": x, "y": y}})
+
+            except OSError as e:
+                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                    continue
+                raise  # Device loss and other failures must restart discovery.
+
+    except Exception as e:
+        sys.stderr.write(f"Touchpad reader failed: {e}\n")
+        os._exit(1)
+    finally:
+        # Clean up
+        try:
+            fd.close()
+        except:
+            pass
+
+if __name__ == "__main__":
+    import sys
+    # if call comes with arguments, pass only the first one. if it doesn't, start normal orientation operation
+    # maybe implement builtin daemonization
+    if len(sys.argv) > 1:
+        DEBUG=1 if sys.argv[1].lower() == "debug" else 0;
+        TYPE=sys.argv[2:];
+        if "stop" in TYPE:
+            TYPE.remove("stop");
+            STOP = True;
+        main()
+    else:
+        subprocess.Popen(["daemonize", sys.argv[0], "execute"])

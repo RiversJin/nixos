@@ -1,0 +1,38 @@
+configuration {
+    font: "Maple Mono Normal NF CN 12";
+    show-icons: true;
+    drun-display-format: "{name}";
+    drun-match-fields: "name,generic,exec,keywords";
+    display-drun: "›";
+    matching: "fuzzy";
+    sort: true;
+    global-kb: false;
+    click-to-exit: false;
+}
+@theme "/dev/null"
+* {
+    background-color: transparent;
+    text-color: #dce5ef;
+    margin: 0px;
+    padding: 0px;
+    border: 0px;
+}
+window {
+    width: 620px;
+    location: center;
+    anchor: center;
+    background-color: rgba(16, 26, 40, 0.65);
+    border: 1px;
+    border-color: #91b8ed55;
+    border-radius: 8px;
+    padding: 20px 24px;
+}
+mainbox { children: [inputbar, listview]; spacing: 16px; }
+inputbar { children: [prompt, entry]; spacing: 12px; padding: 2px 4px 8px; }
+prompt { text-color: #91b8ed; }
+entry { placeholder: "搜索应用"; placeholder-color: #91a4b9; }
+listview { lines: 9; fixed-height: true; scrollbar: false; spacing: 3px; }
+element { padding: 7px 10px; border-radius: 4px; spacing: 12px; }
+element selected.normal { background-color: #293e5070; text-color: #f0f5f9; }
+element-icon { size: 22px; }
+element-text { vertical-align: 0.5; highlight: bold #91b8ed; }

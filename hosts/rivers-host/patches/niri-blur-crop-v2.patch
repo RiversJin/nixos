@@ -1,0 +1,242 @@
+--- a/src/render_helpers/framebuffer_effect.rs
++++ b/src/render_helpers/framebuffer_effect.rs
+@@ -78,10 +78,14 @@
+             id = id.namespaced(ns);
+         }
+ 
++        let geometry = params.subregion.as_ref().map_or(params.geometry, |region| {
++            crop_to_subregion(params.geometry, region, blur_options, params.scale)
++        });
++
+         FramebufferEffectElement {
+             id,
+             commit: self.commit,
+-            geometry: params.geometry,
++            geometry,
+             clip_geo,
+             corner_radius,
+             subregion: params.subregion,
+@@ -93,6 +97,67 @@
+     }
+ }
+ 
++/// Bound framebuffer work before capture, not only when drawing the blurred result.
++///
++/// The blur pyramid samples outside the visible region. Keep a conservative halo and
++/// preserve the original pyramid's pixel phase. Odd-sized and fractionally positioned
++/// surfaces use the old path rather than subtly changing their filter kernel.
++fn crop_to_subregion(
++    geometry: Rectangle<f64, Logical>,
++    subregion: &TransformedRegion,
++    blur: Option<BlurOptions>,
++    scale: f64,
++) -> Rectangle<f64, Logical> {
++    if !scale.is_finite() || scale <= 0. {
++        return geometry;
++    }
++    let (grid, padding) = if let Some(blur) = blur {
++        let grid = 2f64.powi(i32::from(blur.passes.clamp(1, 31)));
++        // At each level: downsample offset + upsample 2*offset, plus bilinear support.
++        let padding = ((3. * blur.offset.abs() + 3.) * (grid - 1.)).ceil();
++        (grid, padding)
++    } else {
++        (1., 0.)
++    };
++    let origin = [geometry.loc.x * scale, geometry.loc.y * scale];
++    let size = [geometry.size.w * scale, geometry.size.h * scale];
++    if origin.iter().chain(size.iter()).any(|v| !v.is_finite() || (v - v.round()).abs() > 1e-6)
++        || size.iter().any(|v| *v <= 0. || v.round() % grid != 0.)
++        || !padding.is_finite()
++    {
++        return geometry;
++    }
++    let mut lo = [f64::INFINITY; 2];
++    let mut hi = [f64::NEG_INFINITY; 2];
++    for (a, b) in subregion.iter() {
++        if ![a.x, a.y, b.x, b.y].iter().all(|v| v.is_finite()) {
++            return geometry;
++        }
++        let a = [a.x * scale - origin[0], a.y * scale - origin[1]];
++        let b = [b.x * scale - origin[0], b.y * scale - origin[1]];
++        let a = [a[0].max(0.), a[1].max(0.)];
++        let b = [b[0].min(size[0]), b[1].min(size[1])];
++        if a[0] >= b[0] || a[1] >= b[1] {
++            continue;
++        }
++        for axis in 0..2 {
++            lo[axis] = lo[axis].min(a[axis]);
++            hi[axis] = hi[axis].max(b[axis]);
++        }
++    }
++    if !lo.iter().chain(hi.iter()).all(|v| v.is_finite()) {
++        return geometry;
++    }
++    for axis in 0..2 {
++        lo[axis] = (((lo[axis] - padding) / grid).floor() * grid).max(0.);
++        hi[axis] = (((hi[axis] + padding) / grid).ceil() * grid).min(size[axis]);
++    }
++    Rectangle::from_extremities(
++        ((origin[0] + lo[0]) / scale, (origin[1] + lo[1]) / scale),
++        ((origin[0] + hi[0]) / scale, (origin[1] + hi[1]) / scale),
++    )
++}
++
+ impl FramebufferEffectElement {
+     fn compute_uniforms(
+         &self,
+@@ -455,3 +520,155 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod crop_tests {
++    use std::sync::Arc;
++
++    use smithay::utils::{Logical, Rectangle};
++
++    use super::{crop_to_subregion, BlurOptions, TransformedRegion};
++
++    fn region(rects: Vec<Rectangle<i32, Logical>>) -> TransformedRegion {
++        TransformedRegion { rects: Arc::new(rects), scale: 1.0.into(), offset: (0.0, 0.0).into() }
++    }
++
++    fn blur() -> Option<BlurOptions> {
++        Some(BlurOptions { passes: 3, offset: 4.0 })
++    }
++
++    #[test]
++    fn top_bar_keeps_halo_without_capturing_whole_4k_surface() {
++        let full = Rectangle::new((0.0, 0.0).into(), (2560.0, 1440.0).into());
++        let bar = region(vec![Rectangle::new((0, 0).into(), (2560, 32).into())]);
++        let crop = crop_to_subregion(full, &bar, blur(), 1.5);
++        assert_eq!(crop.loc, full.loc);
++        assert_eq!(crop.size.w, full.size.w);
++        assert_eq!(crop.size.h * 1.5, 160.0);
++        assert!(crop.size.h < full.size.h / 10.0);
++    }
++
++    #[test]
++    fn separated_regions_are_both_retained() {
++        let full = Rectangle::new((0.0, 0.0).into(), (1920.0, 1080.0).into());
++        let regions = region(vec![
++            Rectangle::new((0, 0).into(), (1920, 32).into()),
++            Rectangle::new((700, 500).into(), (300, 400).into()),
++        ]);
++        let crop = crop_to_subregion(full, &regions, blur(), 1.0);
++        assert_eq!(crop.size.h, 1008.0);
++        assert!(crop.contains_rect(Rectangle::new((700.0, 500.0).into(), (300.0, 400.0).into())));
++    }
++
++    #[test]
++    fn translated_scaled_regions_keep_pyramid_alignment() {
++        let full = Rectangle::new((100.0, 200.0).into(), (1280.0, 720.0).into());
++        let mut r = region(vec![Rectangle::new((200, 100).into(), (100, 100).into())]);
++        r.scale = 2.0.into();
++        r.offset = full.loc;
++        let crop = crop_to_subregion(full, &r, blur(), 1.5);
++        assert!(crop.contains_rect(Rectangle::new((500.0, 400.0).into(), (200.0, 200.0).into())));
++        assert_eq!(((crop.loc.x - full.loc.x) * 1.5) % 8.0, 0.0);
++        assert_eq!(((crop.loc.y - full.loc.y) * 1.5) % 8.0, 0.0);
++        assert_eq!((crop.size.w * 1.5) % 8.0, 0.0);
++        assert_eq!((crop.size.h * 1.5) % 8.0, 0.0);
++    }
++
++    #[test]
++    fn odd_size_and_fractional_pixel_origin_fall_back() {
++        let r = region(vec![Rectangle::new((0, 0).into(), (200, 30).into())]);
++        for full in [
++            Rectangle::new((0.0, 0.0).into(), (1919.0, 1080.0).into()),
++            Rectangle::new((0.5, 0.0).into(), (1920.0, 1080.0).into()),
++        ] {
++            assert_eq!(crop_to_subregion(full, &r, blur(), 1.0), full);
++        }
++    }
++
++    #[test]
++    fn empty_or_outside_region_falls_back() {
++        let full = Rectangle::new((0.0, 0.0).into(), (1920.0, 1080.0).into());
++        assert_eq!(crop_to_subregion(full, &region(vec![]), blur(), 1.0), full);
++        let r = region(vec![Rectangle::new((2000, 0).into(), (20, 20).into())]);
++        assert_eq!(crop_to_subregion(full, &r, blur(), 1.0), full);
++    }
++
++    #[test]
++    fn unblurred_effect_needs_no_sampling_halo() {
++        let full = Rectangle::new((0.0, 0.0).into(), (1920.0, 1080.0).into());
++        let r = region(vec![Rectangle::new((100, 200).into(), (300, 40).into())]);
++        assert_eq!(crop_to_subregion(full, &r, None, 1.0), Rectangle::new((100.0, 200.0).into(), (300.0, 40.0).into()));
++    }
++}
++
++#[cfg(test)]
++mod egl_crop_tests {
++    use std::sync::Arc;
++    use smithay::backend::allocator::Fourcc;
++    use smithay::backend::egl::{EGLContext, EGLDisplay, native::EGLSurfacelessDisplay};
++    use smithay::backend::renderer::element::Kind;
++    use smithay::backend::renderer::gles::GlesRenderer;
++    use smithay::utils::{Rectangle, Transform};
++    use crate::render_helpers::{render_to_vec, shaders, resources};
++    use crate::render_helpers::background_effect::RenderParams;
++    use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
++    use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
++    use super::{FramebufferEffect, FramebufferEffectElement, BlurOptions, TransformedRegion};
++
++    crate::niri_render_elements! { TestElement => {
++        Texture = PrimaryGpuTextureRenderElement,
++        Effect = FramebufferEffectElement,
++    } }
++
++    #[test]
++    fn egl_crop_matches_full_framebuffer() {
++        let mut renderer = unsafe {
++            let display = EGLDisplay::new(EGLSurfacelessDisplay).unwrap();
++            let context = EGLContext::new(&display).unwrap();
++            GlesRenderer::new(context).unwrap()
++        };
++        resources::init(&mut renderer);
++        shaders::init(&mut renderer);
++        let (w, h) = (1920usize, 1080usize);
++        let mut pixels = vec![0u8; w*h*4];
++        for y in 0..h {
++            for x in 0..w {
++                let i = (y*w+x)*4;
++                pixels[i] = if (x/7+y/11)%2 == 0 { 255 } else { 0 };
++                pixels[i+1] = ((x*19+y*3)%256) as u8;
++                pixels[i+2] = ((y*13+x*5)%256) as u8;
++                pixels[i+3] = 255;
++            }
++        }
++        let size = (w as i32,h as i32).into();
++        for scale in [1.0, 1.5] {
++            let background = TextureBuffer::from_memory(&mut renderer, &pixels, Fourcc::Abgr8888,
++                (w as i32,h as i32), false, scale, Transform::Normal, vec![]).unwrap();
++            let full = Rectangle::new((0.0,0.0).into(), (w as f64/scale,h as f64/scale).into());
++            for rects in [
++                vec![Rectangle::new((0,0).into(), (1200,32).into())],
++                vec![Rectangle::new((150,130).into(), (300,200).into())],
++                vec![Rectangle::new((0,0).into(), (1200,32).into()), Rectangle::new((700,300).into(), (180,180).into())],
++            ] {
++                let region = TransformedRegion { rects: Arc::new(rects), scale: 1.0.into(), offset: (0.0,0.0).into() };
++                let make_effect = || FramebufferEffect::new().render(None, RenderParams {
++                    geometry: full, subregion: Some(region.clone()), clip: None, scale,
++                }, Some(BlurOptions { passes: 3, offset: 4.0 }), 0.0, 1.0);
++                let render = |renderer: &mut GlesRenderer, effect: FramebufferEffectElement| {
++                    let texture = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
++                        background.clone(), (0.0,0.0), 1.0, None, None, Kind::Unspecified));
++                    render_to_vec(renderer, size, scale.into(), Transform::Normal, Fourcc::Abgr8888,
++                        vec![TestElement::Texture(texture), TestElement::Effect(effect)].into_iter()).unwrap()
++                };
++                let mut uncropped = make_effect();
++                uncropped.geometry = full;
++                let reference = render(&mut renderer, uncropped);
++                let optimized = render(&mut renderer, make_effect());
++                let max_diff = reference.iter().zip(&optimized).map(|(a,b)| a.abs_diff(*b)).max().unwrap();
++                let count = reference.iter().zip(&optimized).filter(|(a,b)| a.abs_diff(**b)>2).count();
++                eprintln!("scale={scale} rects={:?}: max_channel_diff={max_diff}, channels_over_2={count}", region.rects);
++                assert!(max_diff <= 2, "cropped blur differs from the full framebuffer");
++            }
++        }
++    }
++}

@@ -1,0 +1,7 @@
+result
+result-*
+
+.claude/
+.codex
+.vscode/
+secrets/*

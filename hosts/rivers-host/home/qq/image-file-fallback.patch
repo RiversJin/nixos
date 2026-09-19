@@ -1,0 +1,69 @@
+diff --git a/src/main.rs b/src/main.rs
+index 555a9db..c205516 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -132,6 +132,25 @@ fn normalize_png(data: Vec<u8>) -> Result<Option<Vec<u8>>> {
+     Ok(Some(png))
+ }
+
++fn image_file_png(uri: &[u8]) -> Option<Vec<u8>> {
++    use std::io::Read;
++    let uri = std::str::from_utf8(uri).ok()?.trim();
++    let path = Url::parse(uri).ok()?.to_file_path().ok()?;
++    let file = std::fs::File::open(path).ok()?;
++    let metadata = file.metadata().ok()?;
++    if !metadata.is_file() || metadata.len() > MAX_SELECTION_BYTES as u64 {
++        return None;
++    }
++    let mut data = Vec::new();
++    file.take(MAX_SELECTION_BYTES as u64 + 1)
++        .read_to_end(&mut data)
++        .ok()?;
++    if data.len() > MAX_SELECTION_BYTES {
++        return None;
++    }
++    normalize_png(data).ok().flatten()
++}
++
+ fn qq_file_uri(data: &[u8]) -> Option<Vec<u8>> {
+     let mut reader = Reader::from_reader(data);
+     let mut file_path = None;
+@@ -522,6 +541,13 @@ fn mirror(
+         });
+     }
+     if let Some(uri) = file_uri {
++        // QQ sometimes copies an image as a file element. Offer both representations.
++        if let Some(image) = image_file_png(&uri) {
++            sources.push(MimeSource {
++                source: Source::Bytes(image.into_boxed_slice()),
++                mime_type: MimeType::Specific(PNG_MIME.to_owned()),
++            });
++        }
+         sources.push(MimeSource {
+             source: Source::Bytes(uri.into_boxed_slice()),
+             mime_type: MimeType::Specific(URI_LIST_MIME.to_owned()),
+@@ -562,6 +588,24 @@ fn publish(
+ mod tests {
+     use super::*;
+
++    #[test]
++    fn copied_image_file_has_png_fallback() {
++        let path =
++            std::env::temp_dir().join(format!("qq-clipboard-test-{}.png", std::process::id()));
++        image::RgbaImage::new(2, 2).save(&path).unwrap();
++        let uri = format!("{}\r\n", Url::from_file_path(&path).unwrap());
++        let png = image_file_png(uri.as_bytes()).unwrap();
++        assert_eq!(image::load_from_memory(&png).unwrap().width(), 2);
++        std::fs::remove_file(path).unwrap();
++    }
++
++    #[test]
++    fn non_image_file_has_no_png_fallback() {
++        let uri = Url::from_file_path(std::env::current_exe().unwrap()).unwrap();
++        assert!(image_file_png(uri.as_str().as_bytes()).is_none());
++        assert!(image_file_png(b"https://example.com/image.png").is_none());
++    }
++
+     #[test]
+     fn only_current_job_can_commit() {
+         let x_generation = AtomicU64::new(3);

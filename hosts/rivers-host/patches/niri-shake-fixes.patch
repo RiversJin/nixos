@@ -1,0 +1,206 @@
+--- a/src/cursor.rs
++++ b/src/cursor.rs
+@@ -101,26 +101,16 @@
+         let nat_size = self.effective_cursor_pixel_size(scale, fractional_scale) as f64;
+         let mult = self.dynamic_size_multiplier.get() as f64;
+         let desired = nat_size * mult;
+-        let rescale = if pixel_size > 0 {
+-            desired / pixel_size as f64
+-        } else {
+-            1.0
++        let (icon, cursor) = match self.get_cursor_with_name(icon, scale, fractional_scale) {
++            Some(cursor) => (icon, cursor),
++            None => (CursorIcon::Default, self.get_default_cursor(scale, fractional_scale)),
+         };
+-        self.get_cursor_with_name(icon, scale, fractional_scale)
+-            .map(|cursor| RenderCursor::Named {
+-                icon,
+-                scale,
+-                cursor,
+-                pixel_size,
+-                rescale,
+-            })
+-            .unwrap_or_else(|| RenderCursor::Named {
+-                icon: Default::default(),
+-                scale,
+-                cursor: self.get_default_cursor(scale, fractional_scale),
+-                pixel_size,
+-                rescale,
+-            })
++        // Themes may return a smaller image than requested. Scale the actual
++        // loaded nominal size, otherwise the animation jumps or stops growing.
++        let loaded_size = cursor.frames()[0].size.max(1) as f64;
++        let rescale = if mult <= 1.001 { 1.0 } else { desired / loaded_size };
++        RenderCursor::Named { icon, scale, cursor, pixel_size, rescale }
++
+     }
+ 
+     pub fn is_current_cursor_animated(&self, scale: i32) -> bool {
+@@ -163,11 +153,10 @@
+     pub fn effective_cursor_pixel_size(&self, scale: i32, fractional_scale: f64) -> i32 {
+         let base_size = self.size as f32;
+ 
+-        let effective_scale = if (fractional_scale - scale as f64).abs() > 0.01 {
+-            fractional_scale as f32
+-        } else {
+-            scale as f32
+-        };
++        // Textures carry the integer buffer scale; fractional output scaling is
++        // applied by the renderer. Preserve the original unshaken cursor size.
++        let _ = fractional_scale;
++        let effective_scale = scale as f32;
+ 
+         let target_size = (base_size * effective_scale).round() as i32;
+ 
+@@ -189,11 +178,10 @@
+         let base_size = self.size as f32;
+         let mult = self.dynamic_size_multiplier.get();
+ 
+-        let effective_scale = if (fractional_scale - scale as f64).abs() > 0.01 {
+-            fractional_scale as f32
+-        } else {
+-            scale as f32
+-        };
++        // Textures carry the integer buffer scale; fractional output scaling is
++        // applied by the renderer. Preserve the original unshaken cursor size.
++        let _ = fractional_scale;
++        let effective_scale = scale as f32;
+ 
+         let desired = (base_size * effective_scale * mult).round() as i32;
+ 
+--- a/src/cursor_scale.rs
++++ b/src/cursor_scale.rs
+@@ -319,11 +319,19 @@
+         self.expand_anim.is_some()
+             || self.decay_anim.is_some()
+             || self.pending_decay_at.is_some()
++            || self.current_mult > 1.01
+     }
+ 
+     pub fn advance_animations(&mut self, cursor_manager: &mut CursorManager) -> bool {
+         if self.params.off {
+-            return false;
++            let changed = self.current_mult != 1.0;
++            self.current_mult = 1.0;
++            self.expand_anim = None;
++            self.decay_anim = None;
++            self.pending_decay_at = None;
++            self.history.clear();
++            cursor_manager.set_size_multiplier(1.0);
++            return changed;
+         }
+         let now = Instant::now();
+         let mut changed = false;
+@@ -402,9 +410,7 @@
+                             // No relax_start recorded: if there's been no motion and last_shake_factor is relaxed,
+                             // treat it as if relax_start happened at (now - stopped_threshold_ms).
+                             let elapsed_ms = now.duration_since(last_motion).as_millis() as u64;
+-                            if elapsed_ms >= self.params.stopped_threshold_ms
+-                                && self.last_shake_factor <= self.params.shake_sensitivity
+-                            {
++                            if elapsed_ms >= self.params.stopped_threshold_ms {
+                                 // pretend relax started stopped_threshold_ms ago
+                                 if self.params.shake_relax_ms <= elapsed_ms {
+                                     self.pending_decay_at =
+@@ -447,3 +453,75 @@
+         changed
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn tracker() -> CursorScaleTracker {
++        let config = ShakeConfig { off: false, ..Default::default() };
++        CursorScaleTracker::new(Clock::default(), CursorScaleParams::from_config(config, &Animations::default()))
++    }
++
++    #[test]
++    fn straight_motion_does_not_expand_but_reversals_do() {
++        let mut t = tracker();
++        for x in [0.0, 120.0, 240.0, 360.0] {
++            t.on_motion((x, 0.0).into());
++        }
++        assert!(t.expand_anim.is_none());
++        t.on_motion((0.0, 0.0).into());
++        t.on_motion((360.0, 0.0).into());
++        assert!(t.expand_anim.is_some());
++    }
++
++    #[test]
++    fn enlarged_cursor_keeps_frames_until_decay_is_scheduled() {
++        let mut t = tracker();
++        t.current_mult = 3.0;
++        t.last_motion_instant = Some(Instant::now());
++        assert!(t.has_animations());
++        let mut cursor = CursorManager::new("default", 24);
++        t.last_motion_instant = Some(Instant::now() - Duration::from_secs(1));
++        t.advance_animations(&mut cursor);
++        assert!(t.pending_decay_at.is_some());
++        t.pending_decay_at = Some(Instant::now() - Duration::from_secs(1));
++        t.advance_animations(&mut cursor);
++        assert!(t.decay_anim.is_some());
++        t.clock.set_complete_instantly(true);
++        t.advance_animations(&mut cursor);
++        assert_eq!(t.current_mult, 1.0);
++        assert!(!t.has_animations());
++    }
++
++    #[test]
++    fn intensity_mode_returns_to_normal_when_motion_stops_after_shake() {
++        let mut t = tracker();
++        t.params.behavior = ShakeBehavior::IntensityBased;
++        t.current_mult = 3.0;
++        t.last_shake_factor = 5.0;
++        t.last_motion_instant = Some(Instant::now() - Duration::from_secs(1));
++        t.advance_animations(&mut CursorManager::new("default", 24));
++        assert!(t.pending_decay_at.is_some());
++    }
++
++    #[test]
++    fn disabling_feature_restores_normal_cursor() {
++        let mut t = tracker();
++        let mut cursor = CursorManager::new("default", 24);
++        t.current_mult = 3.0;
++        cursor.set_size_multiplier(3.0);
++        t.params.off = true;
++        assert!(t.advance_animations(&mut cursor));
++        assert_eq!(cursor.size_multiplier(), 1.0);
++        assert!(!t.has_animations());
++    }
++
++    #[test]
++    fn fractional_output_keeps_original_integer_buffer_size() {
++        let cursor = CursorManager::new("default", 24);
++        assert_eq!(cursor.effective_cursor_pixel_size(2, 1.5), 48);
++        assert_eq!(cursor.texture_pixel_size(2, 1.5), 48);
++        assert_eq!(cursor.texture_pixel_size(1, 1.0), 24);
++    }
++}
+--- a/niri-config/src/misc.rs
++++ b/niri-config/src/misc.rs
+@@ -33,9 +33,11 @@
+ impl Default for ShakeConfig {
+     fn default() -> Self {
+         Self {
+-            off: true,
+-            max_multiplier: 4.5,
+-            post_expand_delay_ms: 250,
++            // Enable the local trial without new config syntax, so switching
++            // packages does not invalidate the still-running older compositor.
++            off: false,
++            max_multiplier: 3.0,
++            post_expand_delay_ms: 500,
+             expand_duration_ms: 200,
+             decay_duration_ms: 300,
+             shake_interval_ms: 400,
+@@ -43,7 +45,7 @@
+             sensitivity: 2.0,
+             cooldown_ms: Some(400),
+             behavior: Some(String::from("hold")),
+-            stopped_threshold_ms: Some(50),
++            stopped_threshold_ms: Some(100),
+             shake_relax_ms: Some(150),
+         }
+     }
