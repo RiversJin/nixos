@@ -275,7 +275,7 @@ in
     ./modules/backup-sync.nix
     ./modules/aria.nix
     ./modules/tailscale.nix
-    ./modules/ttyd.nix
+    ../../modules/zellij-web.nix
     ./modules/samba.nix
     ./modules/webdav.nix
     ./modules/jellyfin.nix

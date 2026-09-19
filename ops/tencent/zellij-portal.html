@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#f5f7f5">
+<title>Rivers · 终端</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(ellipse at 18% 28%, #dfece4 0%, transparent 48%), radial-gradient(ellipse at 85% 70%, #e1e9f3 0%, transparent 48%), radial-gradient(ellipse at 65% 15%, #fff9ed 0%, transparent 45%), #f5f7f5; color: #303d39; font: 16px/1.6 system-ui,sans-serif; min-height: 100svh; display: grid; place-items: center; padding: 28px; }
+  main { width: min(100%, 720px); }
+  .label { color: #586f65; letter-spacing: .22em; font-size: 12px; }
+  h1 { font-weight: 500; font-size: clamp(32px,6vw,48px); line-height: 1.3; margin: 20px 0 12px; }
+  .intro { color: #62736b; margin: 0 0 36px; }
+  nav { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
+  a { display: block; position: relative; border: 1px solid rgba(255,255,255,.9); border-radius: 22px; background: rgba(255,255,255,.46); -webkit-backdrop-filter: blur(22px) saturate(135%); backdrop-filter: blur(22px) saturate(135%); box-shadow: 0 12px 38px -18px rgba(64,87,77,.2), inset 0 1px 0 rgba(255,255,255,.95); color: inherit; padding: 28px; text-decoration: none; transition: background .2s,box-shadow .2s,transform .2s; }
+  a:hover { background: rgba(255,255,255,.7); box-shadow: 0 18px 40px -18px rgba(64,87,77,.27), inset 0 1px 0 #fff; transform: translateY(-3px); }
+  a:focus-visible { outline: 2px solid #648376; outline-offset: 4px; }
+  .number { font: 12px ui-monospace,monospace; color: #586f65; }
+  h2 { font-size: 23px; font-weight: 500; margin: 26px 0 4px; }
+  .detail { color: #62736b; font-size: 14px; }
+  .arrow { position: absolute; right: 28px; top: 24px; color: #648376; font-size: 24px; }
+  footer { color: #68776f; font-size: 13px; margin-top: 28px; }
+  @media (max-width:520px) { nav { grid-template-columns: 1fr; } h2 { margin-top: 16px; } }
+  @media (prefers-reduced-motion:reduce) { a { transition: none; } a:hover { transform: none; } }
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) { a { background: rgba(255,255,255,.85); } }
+</style>
+<main>
+  <div class="label">RIVERS / TERMINAL</div>
+  <h1>回到你的工作现场。</h1>
+  <p class="intro">选择一台主机，继续上次的终端会话。</p>
+  <nav aria-label="选择终端主机">
+    <a href="https://gateway-term.riversjins.cc:9444/">
+      <span class="number">01 / GATEWAY</span><span class="arrow" aria-hidden="true">↗</span>
+      <h2>Gateway</h2><span class="detail">网关 · rivers-gateway</span>
+    </a>
+    <a href="https://host-term.riversjins.cc:9444/">
+      <span class="number">02 / WORKSTATION</span><span class="arrow" aria-hidden="true">↗</span>
+      <h2>工作站</h2><span class="detail">桌面主机 · rivers-host</span>
+    </a>
+  </nav>
+  <footer>首次登录时输入对应主机的令牌，勾选 Remember me。关闭网页后，会话继续运行。</footer>
+</main>
+</html>

@@ -1,0 +1,27 @@
+# Imported by /etc/caddy/Caddyfile; replaces its old ttyd :9444 block.
+t.riversjins.cc:9444 {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    root * /srv/zellij-portal
+    header Cache-Control "no-store"
+    file_server
+}
+
+gateway-term.riversjins.cc:9444 {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    reverse_proxy 100.64.0.2:8083 {
+        stream_close_delay 5m
+    }
+}
+
+host-term.riversjins.cc:9444 {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    reverse_proxy 100.64.0.1:8083 {
+        stream_close_delay 5m
+    }
+}

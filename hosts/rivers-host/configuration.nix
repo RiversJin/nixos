@@ -7,6 +7,7 @@
 
 {
   imports = [
+    ../../modules/zellij-web.nix
     ./hardware-configuration.nix
     ./system/boot.nix
     ./system/networking.nix
