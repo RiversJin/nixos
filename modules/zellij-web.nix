@@ -21,6 +21,7 @@ in
         WorkingDirectory = "%h";
         UMask = "0077";
         Environment = [
+          "TERM=xterm-256color"
           "SHELL=${pkgs.zsh}/bin/zsh"
           "PATH=/etc/profiles/per-user/rivers/bin:/run/current-system/sw/bin"
         ];
