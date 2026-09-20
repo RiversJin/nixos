@@ -302,7 +302,7 @@ in
   '';
   systemd.user.timers.niri-daily-theme = {
     Unit = {
-      Description = "Daily anime wallpaper and palette";
+      Description = "Daily scenery wallpaper and palette";
       PartOf = [ "niri-desktop.target" ];
     };
     Timer = {
@@ -316,7 +316,7 @@ in
     name = "换一张壁纸";
     genericName = "Wallpaper";
     settings.Keywords = "bz;bizhi;huanbizhi;wallpaper;anime;random;theme;";
-    comment = "随机二次元壁纸并自动搭配桌面颜色";
+    comment = "随机风景壁纸并自动搭配桌面颜色";
     exec = "${dailyTheme}/bin/niri-daily next";
     icon = "preferences-desktop-wallpaper";
     terminal = false;
@@ -351,7 +351,7 @@ in
     };
     niri-daily-theme = {
       Unit = {
-        Description = "Select today's anime wallpaper and generate desktop colors";
+        Description = "Select today's scenery wallpaper and generate desktop colors";
         After = [ "graphical-session.target" ];
         PartOf = [ "niri-desktop.target" ];
       };

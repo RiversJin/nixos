@@ -3,6 +3,7 @@ import argparse
 import datetime as dt
 import fcntl
 import json
+import html
 import os
 from pathlib import Path
 import re
@@ -15,7 +16,6 @@ import urllib.parse
 import urllib.request
 from PIL import Image, ImageStat
 
-API = 'https://wallhaven.cc/api/v1/search'
 OUTPUTS = ('DP-1', 'DP-3')
 PRIMARY = 'DP-1'
 RECENT_LIMIT = 28
@@ -43,34 +43,69 @@ def fetch(url, limit):
 
 
 def scenery_candidates():
-    # Union scenic tags from the highest-ranked pages; enough variety for two screens.
+    # Public collection pages expose original image URLs; no API key is needed.
     candidates = {}
-    for term in ('landscape', 'scenery'):
-        params = dict(q=term, categories='010', purity='100', atleast='3840x2160',
-                      ratios='16x9', sorting='toplist', topRange='1y')
-        data = json.loads(fetch(API + '?' + urllib.parse.urlencode(params), 2 * 1024 * 1024))
-        for item in data['data']:
-            candidates[item['id']] = item
-        for page in range(2, min(3, data.get('meta', {}).get('last_page', 1)) + 1):
-            params['page'] = page
-            more = json.loads(fetch(API + '?' + urllib.parse.urlencode(params), 2 * 1024 * 1024))
-            for item in more['data']:
-                candidates[item['id']] = item
+    errors = []
+    pages = [
+        ('alpha', 'https://alphacoders.com/landscape-wallpapers'),
+        ('cg', 'https://wallpapercg.com/dolomite-mountains-wallpapers'),
+        ('cg', 'https://wallpapercg.com/tropical-wallpapers'),
+        ('cg', 'https://wallpapercg.com/anime-scenery-wallpapers'),
+    ]
+    for provider, page in pages:
+        try:
+            document = fetch(page, 4 * 1024 * 1024).decode('utf-8')
+            if provider == 'alpha':
+                urls = re.findall(r'itemprop="contentUrl" content="([^"]+)"', document)
+            else:
+                urls = re.findall(r'href="(/download/[^"<>]+-\d+x\d+-\d+\.(?:jpg|jpeg|png|webp))"', document)
+            for value in urls:
+                url = urllib.parse.urljoin(page, html.unescape(value))
+                if provider == 'alpha':
+                    match = re.fullmatch(r'https://images\d*\.alphacoders\.com/\d+/(\d+)\.(?:jpg|jpeg|png|webp)', url)
+                else:
+                    match = re.search(r'-(\d+)\.(?:jpg|jpeg|png|webp)$', url)
+                    size = re.search(r'-(\d+)x(\d+)-', url)
+                    if not size or not suitable_size(*map(int, size.groups())):
+                        continue
+                if not match:
+                    continue
+                image_id = match[1]
+                key = provider + '-' + image_id
+                candidates[key] = dict(id=key, path=url,
+                    url=('https://wall.alphacoders.com/big.php?i=' + image_id
+                         if provider == 'alpha' else page))
+        except Exception as error:
+            errors.append(page + ': ' + str(error))
+    for error in errors:
+        print('Source warning: ' + error, file=sys.stderr)
+    if not candidates:
+        raise RuntimeError('No candidates from wallpaper sites: ' + '; '.join(errors))
     return list(candidates.values())
 
 
+def suitable_size(width, height):
+    return width >= 3840 and height >= 2160 and abs(width / height - 16 / 9) <= .03
+
+
 def choose_image(state, old, items):
-    recent = set(old.get('recent_ids', []))
-    items = [x for x in items if x.get('purity') == 'sfw' and x.get('category') == 'anime'
-             and re.fullmatch(r'[a-z0-9]{6}', x.get('id', '')) and x['id'] not in recent]
+    recent = old.get('recent_ids', [])
+    # Prefer unseen images; a small collection must not stop working after 28 picks.
+    # Keep both currently displayed images excluded, including during the second pick.
+    active_ids = old.get('active_ids', [v['id'] for v in old.get('outputs', {}).values()])
+    blocked = set(active_ids) | set(recent[:1])
+    items = [x for x in items if re.fullmatch(r'(?:alpha|cg)-[0-9]+', x.get('id', ''))
+             and x['id'] not in blocked]
     secrets.SystemRandom().shuffle(items)
+    items.sort(key=lambda x: len(recent) - recent.index(x['id']) if x['id'] in recent else 0)
     cache = state / 'images'
     cache.mkdir(exist_ok=True)
     errors = []
-    for item in items[:4]:
+    for item in items[:12]:
         try:
             url = urllib.parse.urlparse(item['path'])
-            if url.scheme != 'https' or url.hostname != 'w.wallhaven.cc':
+            if url.scheme != 'https' or not (url.hostname == 'wallpapercg.com' or
+                    re.fullmatch(r'images[0-9]*\.alphacoders\.com', url.hostname or '')):
                 raise ValueError('Unexpected image host')
             suffix = Path(url.path).suffix.lower()
             if suffix not in ('.png', '.jpg', '.jpeg', '.webp'):
@@ -84,13 +119,13 @@ def choose_image(state, old, items):
                     with Image.open(temporary) as im:
                         im.verify()
                     with Image.open(temporary) as im:
-                        if im.width < 3840 or im.height < 2160 or abs(im.width / im.height - 16 / 9) > .03:
+                        if not suitable_size(im.width, im.height):
                             raise ValueError('Wallpaper does not meet 4K landscape requirements')
                     temporary.replace(image)
                 finally:
                     temporary.unlink(missing_ok=True)
             return image, {'id': item['id'], 'source': item['url'], 'download': item['path'],
-                           'date': dt.date.today().isoformat(),
+                           'date': dt.date.today().isoformat(), 'active_ids': active_ids,
                            'recent_ids': ([item['id']] + old.get('recent_ids', []))[:RECENT_LIMIT]}
         except Exception as error:
             errors.append(str(error))
@@ -235,7 +270,7 @@ def main():
             return
         today = dt.date.today().isoformat()
         if (args.action == 'update' and old.get('date') == today
-                and old.get('selection_style') == 'anime-scenery'
+                and old.get('selection_style') == 'mixed-scenery-v2'
                 and all(old.get('outputs', {}).get(o, {}).get('id') for o in OUTPUTS)
                 and len({old['outputs'][o]['id'] for o in OUTPUTS}) == len(OUTPUTS)):
             print('Wallpaper already selected for ' + today)
@@ -250,7 +285,7 @@ def main():
                 recent = selected
             metadata = dict(output_metadata[PRIMARY], outputs=output_metadata,
                             date=today, recent_ids=recent['recent_ids'],
-                            selection_style='anime-scenery', palette_output=PRIMARY)
+                            selection_style='mixed-scenery-v2', palette_output=PRIMARY)
             applied = activate(state, base, images, metadata)
         except Exception as error:
             print('Keeping the previous wallpaper: ' + str(error), file=sys.stderr)
