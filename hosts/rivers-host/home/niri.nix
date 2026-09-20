@@ -127,22 +127,11 @@ let
       path = config.xdg.configFile."niri/theme-base/${name}".source;
     }) themeFiles
   );
-  dailyTheme = pkgs.writeShellApplication {
-    name = "niri-daily";
-    runtimeInputs = [
-      (pkgs.python3.withPackages (p: [ p.pillow ]))
-      pkgs.matugen
-      pkgs.niri
-      pkgs.swaybg
-      pkgs.systemd
-      pkgs.mako
-    ];
-    text = ''
-      export NIRI_THEME_BASE=${themeBase}
-      export NIRI_FALLBACK_IMAGE=${wallpaper}
-      export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-      exec python3 ${./niri/daily-theme.py} "$@"
-    '';
+  dailyTheme = import ../../../home/niri-daily.nix {
+    inherit pkgs lib themeBase wallpaper;
+    outputs = [ "DP-1" "DP-3" ];
+    recentLimit = 28;
+    themeFiles = lib.attrValues themeFiles;
   };
   screenshotAnnotate = pkgs.writeShellApplication {
     name = "niri-screenshot-annotate";
