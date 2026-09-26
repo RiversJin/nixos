@@ -16,7 +16,7 @@ input {
         accel-speed -0.2
     }
 }
-output "DP-3" {
+output "HKC OVERSEAS LIMITED N27U 0000000000001" {
     mode "3840x2160@120"
     scale 1.5
     transform "90"
@@ -25,7 +25,7 @@ output "DP-3" {
         default-column-width { proportion 1.0; }
     }
 }
-output "DP-1" {
+output "Xiaomi Corporation Mi Monitor Unknown" {
     mode "3840x2160@120"
     scale 1.5
     position x=0 y=0
