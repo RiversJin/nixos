@@ -18,8 +18,34 @@
     ];
   };
 
-  # DeepSeek Harness' authenticated remote gateway is bound only to tailscale0.
+  # DSH owns login; keep its public proxy entry on the existing Tailscale address.
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 3081 ];
+
+  systemd.sockets.dsh-remote = {
+    description = "DSH native-login entry over Tailscale";
+    wantedBy = [ "sockets.target" ];
+    listenStreams = [ "100.64.0.2:3081" ];
+    socketConfig = {
+      FreeBind = true;
+      NoDelay = true;
+    };
+  };
+
+  systemd.services.dsh-remote = {
+    description = "Forward the Tailscale DSH entry to its loopback web server";
+    requires = [ "dsh-remote.socket" ];
+    after = [ "dsh-remote.socket" ];
+    serviceConfig = {
+      Type = "notify";
+      ExecStart = "${pkgs.systemd}/lib/systemd/systemd-socket-proxyd 127.0.0.1:3080";
+      DynamicUser = true;
+      PrivateTmp = true;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      NoNewPrivileges = true;
+      RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
+    };
+  };
 
   systemd.services.tailscale-exit-node-snat = {
     description = "Give Tailscale exit-node traffic a dedicated Router identity";
