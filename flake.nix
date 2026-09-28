@@ -47,5 +47,7 @@
     };
     packages.x86_64-linux.gitleaks = inputs.host-nixpkgs.legacyPackages.x86_64-linux.gitleaks;
     packages.x86_64-linux.agenix = inputs.agenix.packages.x86_64-linux.default;
+    packages.x86_64-linux.nodejs-official =
+      inputs.gateway-nixpkgs.legacyPackages.x86_64-linux.callPackage ./packages/nodejs-official.nix { };
   };
 }
