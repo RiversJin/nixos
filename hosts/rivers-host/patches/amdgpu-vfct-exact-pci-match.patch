@@ -1,0 +1,60 @@
+Subject: [PATCH] drm/amdgpu: require an exact PCI address for VFCT VBIOS
+
+The first VFCT entry with matching vendor/device/slot/function IDs
+currently wins even if its PCI bus differs. Two RX 7900 XTX boards with
+different subsystem IDs consequently load the same VBIOS. On rivers-host
+this changes
+the second board from three DP ports and one HDMI port to two of each,
+and its Xiaomi display disappears.
+
+Restore strict PCI address matching. When bus renumbering prevents an exact
+match, fall back to the driver's other BIOS retrieval methods instead of
+using a different board's image. This changes the driver's selection only;
+it does not flash either GPU's ROM.
+
+Based on Linux 7.2.6. Reassess when upgrading the kernel.
+
+---
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_bios.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_bios.c
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_bios.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_bios.c
+@@ -377,13 +377,10 @@
+  * @adev: AMDGPU device
+  * @vhdr: VFCT image header to check
+  *
+- * VFCT entries contain the PCI bus number as recorded during BIOS POST.
+- * On systems where the kernel renumbers PCI buses (e.g. pci=realloc or
+- * resource conflicts), the runtime bus number may differ from the POST
+- * value.  Match by device identity (vendor + device + function) and use
+- * the bus number as a preference: exact bus match is preferred, but when
+- * the bus numbers disagree we accept the entry if the device identity
+- * matches.
++ * GPUs with the same vendor and device IDs can have different board BIOSes.
++ * Require an exact PCI address match to avoid selecting another GPU's image.
++ * If PCI buses were renumbered, let the other BIOS retrieval methods run
++ * instead of accepting an ambiguous VFCT entry.
+  *
+  * Returns: 0 on match, -ENODEV on no match
+  */
+@@ -395,19 +392,11 @@
+ 	    vhdr->DeviceID != adev->pdev->device)
+ 		return -ENODEV;
+ 
+-	if (vhdr->PCIDevice != PCI_SLOT(adev->pdev->devfn) ||
++	if (vhdr->PCIBus != adev->pdev->bus->number ||
++	    vhdr->PCIDevice != PCI_SLOT(adev->pdev->devfn) ||
+ 	    vhdr->PCIFunction != PCI_FUNC(adev->pdev->devfn))
+ 		return -ENODEV;
+ 
+-	/* Exact bus number match - preferred */
+-	if (vhdr->PCIBus == adev->pdev->bus->number)
+-		return 0;
+-
+-	/* Bus mismatch but device identity matches (PCI renumbering case) */
+-	dev_notice(adev->dev,
+-		   "VFCT bus number mismatch: table %u != runtime %u, matching by device identity (vendor 0x%04x device 0x%04x)\n",
+-		   vhdr->PCIBus, adev->pdev->bus->number,
+-		   adev->pdev->vendor, adev->pdev->device);
+ 	return 0;
+ }
+ 
