@@ -1,12 +1,12 @@
 { pkgs, ... }:
 
 {
-  # Keep the DeepCool ASSASSIN-IV-VC-VISION display updated.
-  services.hardware.deepcool-digital-linux.enable = true;
-  systemd.services.deepcool-digital-linux = {
-    unitConfig.StartLimitIntervalSec = 0;
-    serviceConfig.RestartSec = "5s";
-  };
+  # DeepCool ASSASSIN-IV-VC-VISION display: temporarily unused.
+  # services.hardware.deepcool-digital-linux.enable = true;
+  # systemd.services.deepcool-digital-linux = {
+  #   unitConfig.StartLimitIntervalSec = 0;
+  #   serviceConfig.RestartSec = "5s";
+  # };
 
   services.udev.packages = [
     (pkgs.writeTextFile {

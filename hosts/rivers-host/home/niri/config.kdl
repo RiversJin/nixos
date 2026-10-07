@@ -70,9 +70,11 @@ layer-rule {
     place-within-backdrop true
 }
 cursor {
-    // The local Niri package enables shake-to-locate at 3x by default.
     xcursor-theme "Bibata-Modern-Classic"
     xcursor-size 24
+    shake {
+        off
+    }
 }
 window-rule {
     geometry-corner-radius 8
