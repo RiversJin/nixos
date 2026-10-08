@@ -1,8 +1,6 @@
 {
   description = "NixOS configurations for rivers-host, rivers-laptop and rivers-gateway";
   inputs = {
-    host-claudeCodeNix.url = "github:sadjow/claude-code-nix?ref=v2.1.153";
-    host-claudeCodeNix.inputs.nixpkgs.follows = "host-nixpkgs";
     host-codex-desktop-linux.url = "github:ilysenko/codex-desktop-linux";
     host-home-manager.url = "github:nix-community/home-manager/master";
     host-home-manager.inputs.nixpkgs.follows = "host-nixpkgs";
@@ -35,7 +33,7 @@
   };
   outputs = inputs: {
     nixosConfigurations = {
-      rivers-host = ((import ./hosts/rivers-host) { claudeCodeNix = inputs.host-claudeCodeNix; codex-desktop-linux = inputs.host-codex-desktop-linux; home-manager = inputs.host-home-manager; neovimConfig = inputs.host-neovimConfig; nix-index-database = inputs.host-nix-index-database; nixpkgs = inputs.host-nixpkgs; rime-ice = inputs.host-rime-ice; xremap = inputs.host-xremap; }).nixosConfigurations.rivers-host.extendModules {
+      rivers-host = ((import ./hosts/rivers-host) { codex-desktop-linux = inputs.host-codex-desktop-linux; home-manager = inputs.host-home-manager; neovimConfig = inputs.host-neovimConfig; nix-index-database = inputs.host-nix-index-database; nixpkgs = inputs.host-nixpkgs; rime-ice = inputs.host-rime-ice; xremap = inputs.host-xremap; }).nixosConfigurations.rivers-host.extendModules {
         modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-host/secrets.nix ];
       };
       rivers-laptop = ((import ./hosts/rivers-laptop) { home-manager = inputs.laptop-home-manager; nixpkgs = inputs.laptop-nixpkgs; nixpkgs-unstable = inputs.laptop-nixpkgs-unstable; rime-ice = inputs.laptop-rime-ice; xremap = inputs.laptop-xremap; }).nixosConfigurations.rivers-laptop.extendModules {

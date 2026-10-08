@@ -167,24 +167,6 @@
         "type": "github"
       }
     },
-    "flake-utils_3": {
-      "inputs": {
-        "systems": "systems_4"
-      },
-      "locked": {
-        "lastModified": 1731533236,
-        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "type": "github"
-      }
-    },
     "gateway-home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -275,31 +257,9 @@
         "type": "github"
       }
     },
-    "host-claudeCodeNix": {
-      "inputs": {
-        "flake-utils": "flake-utils_2",
-        "nixpkgs": [
-          "host-nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1779931917,
-        "narHash": "sha256-UFVauPK+eQm9HsAIrEoBAOgBFpzQHnyau5cp9dgtg4M=",
-        "owner": "sadjow",
-        "repo": "claude-code-nix",
-        "rev": "8d8cd609a31b0d40a7949ccf1277bb71d71ceb68",
-        "type": "github"
-      },
-      "original": {
-        "owner": "sadjow",
-        "ref": "v2.1.153",
-        "repo": "claude-code-nix",
-        "type": "github"
-      }
-    },
     "host-codex-desktop-linux": {
       "inputs": {
-        "flake-utils": "flake-utils_3",
+        "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs"
       },
       "locked": {
@@ -632,7 +592,7 @@
       "inputs": {
         "flake-parts": "flake-parts_2",
         "nixpkgs": "nixpkgs_2",
-        "systems": "systems_5"
+        "systems": "systems_4"
       },
       "locked": {
         "lastModified": 1784057377,
@@ -656,7 +616,6 @@
         "gateway-nix-search-tv": "gateway-nix-search-tv",
         "gateway-nixpkgs": "gateway-nixpkgs",
         "gateway-nixpkgs-unstable": "gateway-nixpkgs-unstable",
-        "host-claudeCodeNix": "host-claudeCodeNix",
         "host-codex-desktop-linux": "host-codex-desktop-linux",
         "host-home-manager": "host-home-manager",
         "host-neovimConfig": "host-neovimConfig",
@@ -717,21 +676,6 @@
       }
     },
     "systems_4": {
-      "locked": {
-        "lastModified": 1681028828,
-        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
-        "owner": "nix-systems",
-        "repo": "default",
-        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-systems",
-        "repo": "default",
-        "type": "github"
-      }
-    },
-    "systems_5": {
       "locked": {
         "lastModified": 1774449309,
         "narHash": "sha256-brhZ8DmuGtzkCYHJg4HEd602amKm89Y9ytsFZ5uWD1w=",
