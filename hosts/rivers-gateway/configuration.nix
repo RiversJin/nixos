@@ -443,6 +443,7 @@ in
     uv
 
     hdparm
+    smartmontools
     podman-compose
     ntfs3g
   ];
