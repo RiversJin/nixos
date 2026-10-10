@@ -470,6 +470,11 @@ in
 
   programs.zsh.enable = true;
   programs.nix-index-database.comma.enable = true;
+  services.btrfs.autoScrub = {
+    enable = true;
+    interval = "monthly";
+  };
+
   services.envfs.enable = true;
   services.openssh = {
     enable = true;
