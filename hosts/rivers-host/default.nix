@@ -5,7 +5,6 @@
       nix-index-database,
       rime-ice,
       xremap,
-      claudeCodeNix,
       neovimConfig,
       codex-desktop-linux,
       ...
@@ -16,7 +15,7 @@
     {
       nixosConfigurations.rivers-host = nixpkgs.lib.nixosSystem {
         inherit system;
-        specialArgs = { inherit rime-ice claudeCodeNix; };
+        specialArgs = { inherit rime-ice; };
         modules = [
           ./modules/plasma-login-manager.nix
           {

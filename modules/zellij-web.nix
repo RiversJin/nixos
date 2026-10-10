@@ -29,7 +29,7 @@ in
       Install.WantedBy = [ "default.target" ];
     };
 
-    # Preserve interactive customizations; manage only the web-sharing default.
+    # Preserve interactive customizations; manage web-sharing defaults and theme.
     # Existing sessions must opt in themselves and are never restarted here.
     home.activation.zellijWebSharing = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run ${pkgs.python3}/bin/python3 ${./zellij-web-sharing.py}

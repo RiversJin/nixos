@@ -1,14 +1,9 @@
 {
-  config,
   pkgs,
   lib,
-  claudeCodeNix,
   ...
 }:
 
-let
-  claudeCode = claudeCodeNix.packages.${pkgs.stdenv.hostPlatform.system}.claude-code;
-in
 {
   # System packages
   environment.systemPackages = with pkgs; [
@@ -22,42 +17,6 @@ in
       exec ${openssh-askpass}/libexec/gtk-ssh-askpass "$@"
     '')
 
-    (writeShellScriptBin "claude" ''
-      export TZDIR="${pkgs.tzdata}/share/zoneinfo"
-      export TZ="America/Denver"
-      export LANG="en_US.UTF-8"
-      export LANGUAGE="en_US:en"
-      export LC_ALL="en_US.UTF-8"
-      export LC_ADDRESS="en_US.UTF-8"
-      export LC_COLLATE="en_US.UTF-8"
-      export LC_CTYPE="en_US.UTF-8"
-      export LC_IDENTIFICATION="en_US.UTF-8"
-      export LC_MEASUREMENT="en_US.UTF-8"
-      export LC_MESSAGES="en_US.UTF-8"
-      export LC_MONETARY="en_US.UTF-8"
-      export LC_NAME="en_US.UTF-8"
-      export LC_NUMERIC="en_US.UTF-8"
-      export LC_PAPER="en_US.UTF-8"
-      export LC_TELEPHONE="en_US.UTF-8"
-      export LC_TIME="en_US.UTF-8"
-
-      exec ${claudeCode}/bin/claude "$@"
-    '')
-    (writeShellScriptBin "mi-cc" ''
-      set -euo pipefail
-      unset ANTHROPIC_API_KEY
-      unset ANTHROPIC_SMALL_FAST_MODEL
-      export ANTHROPIC_BASE_URL="https://token-plan-cn.xiaomimimo.com/anthropic"
-      ANTHROPIC_AUTH_TOKEN="$(<${config.age.secrets.mimo-token.path})"
-      export ANTHROPIC_AUTH_TOKEN
-      export ANTHROPIC_MODEL="mimo-v2.5-pro[1m]"
-      export ANTHROPIC_DEFAULT_SONNET_MODEL="mimo-v2.5[1m]"
-      export ANTHROPIC_DEFAULT_OPUS_MODEL="mimo-v2.5-pro[1m]"
-      export ANTHROPIC_DEFAULT_HAIKU_MODEL="mimo-v2.5[1m]"
-      export CLAUDE_CODE_SUBAGENT_MODEL="haiku"
-
-      exec ${claudeCode}/bin/claude "$@"
-    '')
     file
 
     mission-center

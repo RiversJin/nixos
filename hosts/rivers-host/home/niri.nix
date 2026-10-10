@@ -127,22 +127,11 @@ let
       path = config.xdg.configFile."niri/theme-base/${name}".source;
     }) themeFiles
   );
-  dailyTheme = pkgs.writeShellApplication {
-    name = "niri-daily";
-    runtimeInputs = [
-      (pkgs.python3.withPackages (p: [ p.pillow ]))
-      pkgs.matugen
-      pkgs.niri
-      pkgs.swaybg
-      pkgs.systemd
-      pkgs.mako
-    ];
-    text = ''
-      export NIRI_THEME_BASE=${themeBase}
-      export NIRI_FALLBACK_IMAGE=${wallpaper}
-      export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-      exec python3 ${./niri/daily-theme.py} "$@"
-    '';
+  dailyTheme = import ../../../home/niri-daily.nix {
+    inherit pkgs lib themeBase wallpaper;
+    outputs = [ "DP-1" "DP-3" ];
+    recentLimit = 28;
+    themeFiles = lib.attrValues themeFiles;
   };
   screenshotAnnotate = pkgs.writeShellApplication {
     name = "niri-screenshot-annotate";
@@ -302,7 +291,7 @@ in
   '';
   systemd.user.timers.niri-daily-theme = {
     Unit = {
-      Description = "Daily anime wallpaper and palette";
+      Description = "Daily scenery wallpaper and palette";
       PartOf = [ "niri-desktop.target" ];
     };
     Timer = {
@@ -316,7 +305,7 @@ in
     name = "换一张壁纸";
     genericName = "Wallpaper";
     settings.Keywords = "bz;bizhi;huanbizhi;wallpaper;anime;random;theme;";
-    comment = "随机二次元壁纸并自动搭配桌面颜色";
+    comment = "随机风景壁纸并自动搭配桌面颜色";
     exec = "${dailyTheme}/bin/niri-daily next";
     icon = "preferences-desktop-wallpaper";
     terminal = false;
@@ -351,7 +340,7 @@ in
     };
     niri-daily-theme = {
       Unit = {
-        Description = "Select today's anime wallpaper and generate desktop colors";
+        Description = "Select today's scenery wallpaper and generate desktop colors";
         After = [ "graphical-session.target" ];
         PartOf = [ "niri-desktop.target" ];
       };

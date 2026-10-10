@@ -1,4 +1,4 @@
-"""Enable sharing for new sessions without replacing the user's Zellij config."""
+"""Set managed Zellij defaults without replacing the user's interactive config."""
 import os
 from pathlib import Path
 import re
@@ -8,7 +8,12 @@ path = Path.home() / ".config/zellij/config.kdl"
 path.parent.mkdir(parents=True, exist_ok=True)
 original = path.read_text() if path.exists() else ""
 updated = original
-for key, value in [("web_sharing", '"on"'), ("web_server_port", "18082")]:
+for key, value in [
+    ("web_sharing", '"on"'),
+    ("web_server_port", "18082"),
+    # Use explicit RGB colors instead of terminal palette indices (eg. Kitty color16).
+    ("theme", '"tokyo-night-storm"'),
+]:
     pattern = rf'^{key}[^\S\n]+[^\n]*$'
     updated, count = re.subn(pattern, f"{key} {value}", updated, flags=re.MULTILINE)
     if not count:
