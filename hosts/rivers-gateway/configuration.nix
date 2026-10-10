@@ -339,6 +339,7 @@ in
     description = "rivers";
     extraGroups = [
       "wheel"
+      "disk"
     ];
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB88UzWy7D87cgUAvO+I/KcwrYM7XIFgBkLiOn4a6qq6 rivers@DESKTOP-5GDVV2F"
@@ -350,15 +351,7 @@ in
       users = [ "rivers" ];
       commands = [
         {
-          command = "/run/current-system/sw/bin/nixos-rebuild switch";
-          options = [ "NOPASSWD" ];
-        }
-        {
-          command = "/run/current-system/sw/bin/nixos-rebuild switch *";
-          options = [ "NOPASSWD" ];
-        }
-        {
-          command = "/run/current-system/sw/bin/systemctl";
+          command = "ALL";
           options = [ "NOPASSWD" ];
         }
       ];
