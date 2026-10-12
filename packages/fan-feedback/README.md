@@ -68,3 +68,37 @@ Samples older than 30 seconds return a nonzero status. Mode overrides live in
 the device connection is exclusive. Calibration logs JSONL and restores the
 initial parameters and mode when thermally safe. Neither tool changes GPU fan
 control or PCIe power settings.
+
+## Separate host case
+
+The CPU/memory host case is physically separate from the switch/GPU enclosure.
+`host-fan-feedback.service` controls only motherboard **pwm3/fan3**, with its
+own process, sensor loop and crash recovery. CPU and pump fan control stays
+with BIOS. The two daemons share desktop presence and the mode override.
+
+Quiet mode has a **20% minimum**. CPU Tctl 45/55/65/75/80/85 C requests
+20/45/60/75/85/100%; motherboard maximum 40/45/50/55/60/65 C requests
+20/45/60/75/85/100%. Away/cool mode has a 45% minimum. Temperatures are
+smoothed over 15 seconds; elevated demand persists for 120 seconds, ordinary
+changes are +5 points/15 seconds and -2 points/60 seconds. Raw CPU >=80 C or
+board >=60 C immediately requests at least 85%; CPU >=85 C or board >=65 C
+requests 100%. These are conservative control thresholds, not chip ratings.
+
+Board input uses the maximum of all six enabled analog channels. Firmware
+labels do not identify DIMM sensors, so this is a board hot-area proxy rather
+than a memory temperature measurement. The host loop does not use switch or
+GPU load. RPM <300 for three samples, invalid sensors, or a failed write ends
+the session and restores BIOS control before restarting.
+
+The narrowly scoped udev rule grants `rivers` only pwm3 and pwm3_enable write
+access. Ownership is recorded before takeover; normal exit restores BIOS,
+and systemd ExecStopPost does the same after a crash, including SIGKILL.
+The kernel module has no independent userspace-death watchdog.
+
+```
+fan-feedback host-status
+journalctl -u host-fan-feedback.service
+```
+
+`fan-feedback status` also includes host case status. Stopping the host service
+returns fan3 to BIOS; it does not stop the BLE enclosure controller.

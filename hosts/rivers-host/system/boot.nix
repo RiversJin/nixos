@@ -86,9 +86,11 @@ in
   ];
   boot.extraModulePackages = [
     (config.boot.kernelPackages.callPackage ../../../packages/pex88096-hwmon { })
+    (config.boot.kernelPackages.callPackage ../../../packages/nct6683-msi { })
   ];
+  boot.blacklistedKernelModules = [ "nct6683" ];
   boot.kernelModules = [
-    "nct6683"
+    "nct6683_msi"
     "pex88096_hwmon"
   ];
   hardware.enableAllFirmware = true;

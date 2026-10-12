@@ -1,6 +1,7 @@
 mod bluez;
 mod control;
 mod gpu;
+mod host;
 mod protocol;
 
 use bluez::Fan;
@@ -32,6 +33,7 @@ struct Config {
     fallback: u8,
     presence: PathBuf,
     state: PathBuf,
+    host: host::Settings,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -44,6 +46,7 @@ impl Default for Config {
             fallback: 100,
             presence: "/run/user/1000/fan-feedback-presence".into(),
             state: "/run/fan-feedback".into(),
+            host: host::Settings::default(),
         }
     }
 }
@@ -68,11 +71,17 @@ impl Config {
                 "fallback_pwm" => c.fallback = v.parse()?,
                 "presence_file" => c.presence = v.into(),
                 "state_dir" => c.state = v.into(),
+                "host_state_dir" => c.host.state = v.into(),
+                "host_minimum_pwm" => c.host.minimum = v.parse()?,
+                "host_channel" => c.host.channel = v.parse()?,
                 _ => return Err(format!("unknown config key {k}").into()),
             }
         }
         if !(30..=45).contains(&c.minimum) || !(80..=100).contains(&c.fallback) {
             return Err("unsafe PWM limits".into());
+        }
+        if !(20..=50).contains(&c.host.minimum) || !(3..=5).contains(&c.host.channel) {
+            return Err("unsafe host fan configuration".into());
         }
         if c.address.split(':').count() != 6
             || c.address
@@ -155,13 +164,16 @@ fn snapshot(
         "pci":c.pci,"address":c.address})
 }
 fn lock(c: &Config) -> Result<File> {
-    fs::create_dir_all(&c.state)?;
+    lock_at(&c.state)
+}
+fn lock_at(state: &Path) -> Result<File> {
+    fs::create_dir_all(state)?;
     let f = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(c.state.join("lock"))?;
+        .open(state.join("lock"))?;
     // SAFETY: the descriptor remains owned by File until the entire operation ends.
     if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err("another fan-feedback process holds the device lock".into());
@@ -406,14 +418,15 @@ fn run() -> Result<()> {
         match arg.as_str() {
             "--config" => c = Config::load(Path::new(&args.next().ok_or("missing config path")?))?,
             "--state-dir" => c.state = args.next().ok_or("missing state directory")?.into(),
-            "daemon" | "status" | "probe" | "calibrate" | "mode" => {
+            "daemon" | "status" | "probe" | "calibrate" | "mode" | "host-daemon" | "host-auto"
+            | "host-status" => {
                 if command.replace(arg).is_some() {
                     return Err("only one command allowed".into());
                 }
             }
             "--help" | "-h" => {
                 println!(
-                    "fan-feedback [--config PATH] [--state-dir PATH] daemon|status|probe|calibrate PWM:seconds,...|mode auto|quiet|cool"
+                    "fan-feedback [--config PATH] [--state-dir PATH] daemon|status|probe|calibrate PWM:seconds,...|mode auto|quiet|cool|host-daemon|host-auto|host-status"
                 );
                 return Ok(());
             }
@@ -431,6 +444,16 @@ fn run() -> Result<()> {
     }
     match command.as_deref().unwrap_or("status") {
         "daemon" => daemon(&c),
+        "host-daemon" => host::daemon(&c),
+        "host-auto" => host::restore(&c.host),
+        "host-status" => {
+            let v = host::status(&c.host)?;
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            if v["age_seconds"].as_f64().unwrap_or(100.) > 30. {
+                return Err("host controller status is stale".into());
+            }
+            Ok(())
+        }
         "calibrate" => calibrate(&c, &extra.ok_or("missing PWM:seconds stages")?),
         "probe" => {
             let _lock = lock(&c)?;
@@ -464,6 +487,10 @@ fn run() -> Result<()> {
                 serde_json::from_str(&fs::read_to_string(c.state.join("status.json"))?)?;
             let age = timestamp() - v["time"].as_f64().ok_or("missing status timestamp")?;
             v["age_seconds"] = json!(age.round());
+            v["host_case"] = match host::status(&c.host) {
+                Ok(s) => s,
+                Err(e) => json!({"policy":"unavailable","error":e.to_string()}),
+            };
             println!("{}", serde_json::to_string_pretty(&v)?);
             if age > 30. {
                 return Err("controller status is stale; check its service".into());
