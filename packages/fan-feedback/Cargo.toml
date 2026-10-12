@@ -1,0 +1,17 @@
+[package]
+name = "fan-feedback"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-only"
+description = "PEX88096 temperature feedback for a Haicon BLE fan controller"
+
+[dependencies]
+dbus = "=0.9.12"
+libc = "0.2"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

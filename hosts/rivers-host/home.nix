@@ -11,6 +11,7 @@
   imports = [
     ./home/packages.nix
     ./home/niri.nix
+    ./home/fan-feedback.nix
     ./home/fcitx5.nix
     ./home/ghostty.nix
     ./home/kitty.nix

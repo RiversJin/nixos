@@ -16,6 +16,7 @@
     ./system/niri.nix
     ./system/display-power.nix
     ./system/gpu-power.nix
+    ./system/fan-feedback.nix
     ./system/audio.nix
     ./system/packages.nix
     ./system/mihomo.nix
