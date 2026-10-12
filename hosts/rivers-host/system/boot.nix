@@ -1,4 +1,9 @@
-{ lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   # LLD 23 includes the symbol-initialization fix needed with GCC 16 builds.
@@ -79,7 +84,13 @@ in
       ] (_: lib.mkForce lib.kernel.unset);
     }
   ];
-  boot.kernelModules = [ "nct6683" ];
+  boot.extraModulePackages = [
+    (config.boot.kernelPackages.callPackage ../../../packages/pex88096-hwmon { })
+  ];
+  boot.kernelModules = [
+    "nct6683"
+    "pex88096_hwmon"
+  ];
   hardware.enableAllFirmware = true;
 
   # AMD GPU
