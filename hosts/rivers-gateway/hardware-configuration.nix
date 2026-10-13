@@ -28,13 +28,34 @@
   boot.blacklistedKernelModules = [ "amd_sfh" ];
 
 
-  fileSystems."/" =
-    { device = "/dev/disk/by-uuid/982b0ed8-7782-431a-bb7c-34df6ef9d51c";
-      fsType = "ext4";
-    };
+  fileSystems."/" = {
+    device = "/dev/disk/by-uuid/4b09f8e2-e454-4a9c-b6b6-274bbb8e2063";
+    fsType = "btrfs";
+    options = [ "subvol=@" "ssd" "noatime" "compress=zstd:3" ];
+  };
+
+  fileSystems."/home" = {
+    device = "/dev/disk/by-uuid/4b09f8e2-e454-4a9c-b6b6-274bbb8e2063";
+    fsType = "btrfs";
+    options = [ "subvol=@home" "ssd" "noatime" "compress=zstd:3" ];
+  };
+
+  fileSystems."/nix" = {
+    device = "/dev/disk/by-uuid/4b09f8e2-e454-4a9c-b6b6-274bbb8e2063";
+    fsType = "btrfs";
+    options = [ "subvol=@nix" "ssd" "noatime" "compress=zstd:3" ];
+    neededForBoot = true;
+  };
+
+  fileSystems."/var" = {
+    device = "/dev/disk/by-uuid/4b09f8e2-e454-4a9c-b6b6-274bbb8e2063";
+    fsType = "btrfs";
+    options = [ "subvol=@var" "ssd" "noatime" "compress=zstd:3" ];
+    neededForBoot = true;
+  };
 
   fileSystems."/boot" =
-    { device = "/dev/disk/by-uuid/A64A-0F65";
+    { device = "/dev/disk/by-uuid/CA44-DBED";
       fsType = "vfat";
       options = [ "fmask=0022" "dmask=0022" ];
     };
@@ -51,7 +72,9 @@
       options = [ "noatime" "compress=zstd:1" "space_cache=v2" "nofail" ];
     };
 
-  swapDevices = [ ];
+  swapDevices = [
+    { device = "/dev/disk/by-uuid/e8aa82f8-7feb-4b2a-94b1-4f180cf16277"; }
+  ];
 
   # Enables DHCP on each ethernet and wireless interface. In case of scripted networking
   # (the default) this is the recommended approach. When using systemd-networkd it's
