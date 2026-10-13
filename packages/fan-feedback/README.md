@@ -79,8 +79,11 @@ with BIOS. The two daemons share desktop presence and the mode override.
 Quiet mode has a **20% minimum**. CPU Tctl 45/55/65/75/80/85 C requests
 20/45/60/75/85/100%; motherboard maximum 40/45/50/55/60/65 C requests
 20/45/60/75/85/100%. Away/cool mode has a 45% minimum. Temperatures are
-smoothed over 15 seconds; elevated demand persists for 120 seconds, ordinary
-changes are +5 points/15 seconds and -2 points/60 seconds. Raw CPU >=80 C or
+smoothed independently: CPU uses a 60-second time constant to suppress short
+junction-temperature bursts, while the board retains 15 seconds. Elevated
+demand persists for 120 seconds. Ordinary CPU-driven increases are limited to
++3 points/30 seconds; a board request covering the full held target retains
++5 points/15 seconds. Decreases remain -2 points/60 seconds. Raw CPU >=80 C or
 board >=60 C immediately requests at least 85%; CPU >=85 C or board >=65 C
 requests 100%. These are conservative control thresholds, not chip ratings.
 

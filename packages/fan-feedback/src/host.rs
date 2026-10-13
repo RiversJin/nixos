@@ -173,6 +173,9 @@ pub fn restore(s: &Settings) -> Result<()> {
     Ok(())
 }
 
+const CPU_FILTER_SECONDS: f64 = 60.;
+const BOARD_FILTER_SECONDS: f64 = 15.;
+
 struct Policy {
     minimum: u8,
     cpu: Option<f64>,
@@ -182,6 +185,8 @@ struct Policy {
     hold_until: u64,
     last_change: u64,
     request: u8,
+    cpu_request: u8,
+    board_request: u8,
 }
 impl Policy {
     fn new(minimum: u8) -> Self {
@@ -194,6 +199,8 @@ impl Policy {
             hold_until: 0,
             last_change: 0,
             request: minimum,
+            cpu_request: minimum,
+            board_request: minimum,
         }
     }
     fn decide(&mut self, now: u64, cpu: f64, board: f64, quiet: bool, current: u8) -> u8 {
@@ -203,15 +210,17 @@ impl Policy {
             self.minimum.max(45)
         };
         if let Some(old) = self.cpu {
-            let alpha = 1. - (-(now.saturating_sub(self.sample_at) as f64) / 15.).exp();
-            self.cpu = Some(old + (cpu - old) * alpha);
-            self.board += (board - self.board) * alpha;
+            let elapsed = now.saturating_sub(self.sample_at) as f64;
+            let cpu_alpha = 1. - (-elapsed / CPU_FILTER_SECONDS).exp();
+            let board_alpha = 1. - (-elapsed / BOARD_FILTER_SECONDS).exp();
+            self.cpu = Some(old + (cpu - old) * cpu_alpha);
+            self.board += (board - self.board) * board_alpha;
         } else {
             self.cpu = Some(cpu);
             self.board = board;
         }
         self.sample_at = now;
-        self.request = interpolate(
+        self.cpu_request = interpolate(
             self.cpu.unwrap(),
             &[
                 (45., floor),
@@ -221,8 +230,8 @@ impl Policy {
                 (80., 85),
                 (85., 100),
             ],
-        )
-        .max(interpolate(
+        );
+        self.board_request = interpolate(
             self.board,
             &[
                 (40., floor),
@@ -232,7 +241,8 @@ impl Policy {
                 (60., 85),
                 (65., 100),
             ],
-        ));
+        );
+        self.request = self.cpu_request.max(self.board_request);
         if self.request >= self.held || now >= self.hold_until {
             self.held = self.request;
             self.hold_until = now + 120;
@@ -245,8 +255,15 @@ impl Policy {
         }
         let target = self.held.max(floor);
         if target >= current.saturating_add(3) || current < floor {
-            if now.saturating_sub(self.last_change) >= 15 {
-                return target.min(current.saturating_add(5)).max(floor);
+            // CPU junction jumps are handled by its own BIOS fan. Raise case
+            // airflow gently unless the board itself requests the held target.
+            let (interval, step) = if self.board_request >= target {
+                (15, 5)
+            } else {
+                (30, 3)
+            };
+            if now.saturating_sub(self.last_change) >= interval {
+                return target.min(current.saturating_add(step)).max(floor);
             }
         } else if (target.saturating_add(3) < current || (target == floor && target < current))
             && now.saturating_sub(self.last_change) >= 60
@@ -307,7 +324,8 @@ pub fn daemon(c: &Config) -> Result<()> {
             }
             let v = json!({"time":timestamp(),"policy":reason,"cpu_c":r.cpu,"board_c":r.board,
                 "filtered_cpu_c":policy.cpu,"filtered_board_c":policy.board,"board_sensors":r.sensors,
-                "requested_pwm":policy.request,"held_pwm":policy.held,"pwm":percent(r.raw),"pwm_raw":r.raw,
+                "requested_pwm":policy.request,"cpu_request_pwm":policy.cpu_request,"board_request_pwm":policy.board_request,
+                "cpu_filter_seconds":CPU_FILTER_SECONDS,"board_filter_seconds":BOARD_FILTER_SECONDS,"held_pwm":policy.held,"pwm":percent(r.raw),"pwm_raw":r.raw,
                 "rpm":r.rpm,"manual":r.mode==1,"channel":c.host.channel,"cpu_fan_control":"BIOS"});
             atomic_json(&c.host.state.join("status.json"), &v)?;
             if heartbeat.elapsed() >= Duration::from_secs(60) {
@@ -349,6 +367,44 @@ mod tests {
         let next = p.decide(121, 38., 39., true, 75);
         assert_eq!(next, 73);
         assert_eq!(p.held, 20);
+    }
+    #[test]
+    fn short_cpu_burst_does_not_raise_case_fan() {
+        let mut p = Policy::new(20);
+        assert_eq!(p.decide(0, 38., 39., true, 20), 20);
+        // A ten-second junction spike used to be amplified by the 15-second
+        // filter and then held for two minutes. The board remains cool.
+        for now in (5..=120).step_by(5) {
+            let cpu = if now <= 10 { 75. } else { 38. };
+            assert_eq!(p.decide(now, cpu, 39., true, 20), 20);
+        }
+    }
+    #[test]
+    fn sustained_cpu_load_ramps_gently_but_board_ramps_faster() {
+        let mut p = Policy::new(20);
+        p.decide(0, 38., 39., true, 20);
+        let mut current = 20;
+        let mut changes = Vec::new();
+        for now in (5..=150).step_by(5) {
+            let next = p.decide(now, 75., 39., true, current);
+            if next != current {
+                assert!(next > current && next - current <= 3);
+                assert!(now - p.last_change >= 30);
+                p.last_change = now;
+                current = next;
+                changes.push(now);
+            }
+        }
+        assert!(changes.len() >= 4 && current > 20);
+        assert!(p.cpu_request >= 65);
+        let mut board = Policy::new(20);
+        board.decide(0, 38., 50., true, 20);
+        assert_eq!(board.decide(15, 38., 50., true, 20), 25);
+        // Raw guards override both the slow filter and the rise limiter.
+        p.last_change = 150;
+        assert_eq!(p.decide(151, 85., 39., true, current), 100);
+        assert!(p.decide(152, 80., 39., true, current) >= 85);
+        assert_eq!(p.decide(153, 38., 65., true, current), 100);
     }
     #[test]
     fn cpu_and_board_faults_are_not_silently_ignored() {
