@@ -1,0 +1,309 @@
+Subject: [PATCH] hwmon: nct6683: add scoped MS-7C94 manual fan control
+
+Add configuration-phase handshakes, checked PWM writes, standard
+manual/auto mode attributes and restoration of touched channels on removal.
+Restrict control to MAG B550M MORTAR MAX WIFI with the observed NCT6687D
+customer/firmware identifiers; loading the module does not take over fans.
+
+Register mapping and transaction sequence are based on the GPL nct6687d
+driver and the proposed upstream NCT6687D-R fan-control implementation:
+https://github.com/Fred78290/nct6687d/blob/main/nct6687.c
+https://lkml.iu.edu/2610.0/07037.html
+
+The newer MSI DR system-fan mapping is deliberately not used on this board.
+
+---
+diff --git a/nct6683.c b/nct6683.c
+--- a/nct6683.c
++++ b/nct6683.c
+@@ -23,9 +23,11 @@
+ 
+ #include <linux/acpi.h>
+ #include <linux/delay.h>
++#include <linux/dmi.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/jiffies.h>
+ #include <linux/hwmon.h>
+ #include <linux/hwmon-sysfs.h>
+@@ -166,6 +168,12 @@
+ #define NCT6683_REG_FAN_MIN(x)		(0x3b8 + (x) * 2)	/* 16 bit */
+ 
+ #define NCT6683_REG_FAN_CFG_CTRL	0xa01
++#define NCT6683_REG_FAN_MODE	0xa00
++#define NCT6683_REG_FAN_ENGINE_STS 0xcf8
++#define NCT6683_FAN_ENGINE_PHASE	BIT(3)
++#define NCT6683_FAN_ENGINE_INVALID BIT(4)
++#define NCT6683_FAN_ENGINE_CHECK_DONE BIT(5)
++#define NCT6683_FAN_ENGINE_LOCK	BIT(6)
+ #define NCT6683_FAN_CFG_REQ		0x80
+ #define NCT6683_FAN_CFG_DONE		0x40
+ 
+@@ -311,7 +319,11 @@
+ 	u16 customer_id;
+ 
+ 	struct device *hwmon_dev;
+-	const struct attribute_group *groups[6];
++	const struct attribute_group *groups[7];
++	bool msi_control;
++	u8 msi_owned;
++	u8 msi_saved_mode;
++	u8 msi_saved_pwm[NCT6683_NUM_REG_PWM];
+ 
+ 	int temp_num;			/* number of temperature attributes */
+ 	u8 temp_index[NCT6683_NUM_REG_MON];
+@@ -916,6 +928,180 @@
+ 	.base = 1,
+ };
+ 
++/* MSI MS-7C94 firmware 1.0 (05/07/20), ordinary eight-channel mapping. */
++static const struct dmi_system_id nct6683_msi_mortar[] = {
++	{
++		.matches = {
++			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "Micro-Star International Co., Ltd."),
++			DMI_EXACT_MATCH(DMI_BOARD_NAME, "MAG B550M MORTAR MAX WIFI (MS-7C94)"),
++		},
++	},
++	{ }
++};
++
++static bool nct6683_msi_channel(struct nct6683_data *data, int ch)
++{
++	/* This board has CPU, pump and three system fan headers. */
++	return data->msi_control && ch >= 0 && ch < 5 &&
++	       (data->have_pwm & BIT(ch));
++}
++
++static bool nct6683_msi_idle(struct nct6683_data *data)
++{
++	return !(nct6683_read(data, NCT6683_REG_FAN_ENGINE_STS) &
++		 NCT6683_FAN_ENGINE_PHASE) &&
++	       !(nct6683_read(data, NCT6683_REG_FAN_CFG_CTRL) &
++		 NCT6683_FAN_CFG_REQ);
++}
++
++static bool nct6683_msi_accessible(u16 status)
++{
++	return (status & (NCT6683_FAN_ENGINE_PHASE | NCT6683_FAN_ENGINE_LOCK)) ==
++	       NCT6683_FAN_ENGINE_PHASE;
++}
++
++/* Caller holds update_lock, including across the configuration handshake. */
++static int nct6683_msi_update(struct nct6683_data *data, int ch,
++			      bool manual, int cmd)
++{
++	u16 status;
++	bool idle;
++	u8 mode;
++	int err;
++
++	err = read_poll_timeout(nct6683_msi_idle, idle, idle,
++				1000, 1000000, false, data);
++	if (err)
++		return err;
++	nct6683_write(data, NCT6683_REG_FAN_CFG_CTRL,
++		      nct6683_read(data, NCT6683_REG_FAN_CFG_CTRL) |
++		      NCT6683_FAN_CFG_REQ);
++	err = read_poll_timeout(nct6683_read, status,
++				nct6683_msi_accessible(status),
++				1000, 1000000, true, data,
++				NCT6683_REG_FAN_ENGINE_STS);
++	if (err)
++		return err;
++
++	mode = nct6683_read(data, NCT6683_REG_FAN_MODE);
++	if (cmd >= 0)
++		nct6683_write(data, NCT6683_REG_PWM_WRITE(ch), cmd);
++	nct6683_write(data, NCT6683_REG_FAN_MODE,
++		      manual ? mode | BIT(ch) : mode & ~BIT(ch));
++	nct6683_write(data, NCT6683_REG_FAN_CFG_CTRL,
++		      nct6683_read(data, NCT6683_REG_FAN_CFG_CTRL) |
++		      NCT6683_FAN_CFG_DONE);
++	err = read_poll_timeout(nct6683_read, status,
++				(status & NCT6683_FAN_ENGINE_LOCK) &&
++				(status & NCT6683_FAN_ENGINE_CHECK_DONE),
++				1000, 1000000, true, data,
++				NCT6683_REG_FAN_ENGINE_STS);
++	data->valid = false;
++	if (err)
++		return err;
++	if (status & NCT6683_FAN_ENGINE_INVALID)
++		return -EIO;
++	mode = nct6683_read(data, NCT6683_REG_FAN_MODE);
++	if (!!(mode & BIT(ch)) != manual ||
++	    (cmd >= 0 && nct6683_read(data, NCT6683_REG_PWM_WRITE(ch)) != cmd))
++		return -EIO;
++	return 0;
++}
++
++static void nct6683_msi_save(struct nct6683_data *data, int ch)
++{
++	if (data->msi_owned & BIT(ch))
++		return;
++	data->msi_saved_mode = (data->msi_saved_mode & ~BIT(ch)) |
++		(nct6683_read(data, NCT6683_REG_FAN_MODE) & BIT(ch));
++	data->msi_saved_pwm[ch] = nct6683_read(data, NCT6683_REG_PWM_WRITE(ch));
++	data->msi_owned |= BIT(ch);
++}
++
++/* Runs before devres releases the EC I/O region; only undo touched channels. */
++static void nct6683_msi_restore(void *arg)
++{
++	struct nct6683_data *data = arg;
++	int ch, err;
++
++	mutex_lock(&data->update_lock);
++	for (ch = 0; ch < 5; ch++) {
++		if (!(data->msi_owned & BIT(ch)))
++			continue;
++		err = nct6683_msi_update(data, ch,
++					 !!(data->msi_saved_mode & BIT(ch)),
++					 data->msi_saved_pwm[ch]);
++		if (err)
++			pr_err("Failed restoring MSI fan %d: %d\n", ch + 1, err);
++		else
++			data->msi_owned &= ~BIT(ch);
++	}
++	mutex_unlock(&data->update_lock);
++}
++
++static ssize_t show_pwm_enable(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
++	struct nct6683_data *data = dev_get_drvdata(dev);
++	u8 mode;
++
++	mutex_lock(&data->update_lock);
++	mode = nct6683_read(data, NCT6683_REG_FAN_MODE);
++	mutex_unlock(&data->update_lock);
++	return sysfs_emit(buf, "%u\n", mode & BIT(sattr->index) ? 1 : 2);
++}
++
++static ssize_t store_pwm_enable(struct device *dev,
++				struct device_attribute *attr,
++				const char *buf, size_t count)
++{
++	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
++	struct nct6683_data *data = dev_get_drvdata(dev);
++	int ch = sattr->index, err, cmd = -1;
++	unsigned long val;
++
++	if (kstrtoul(buf, 10, &val) || (val != 1 && val != 2))
++		return -EINVAL;
++	if (!nct6683_msi_channel(data, ch))
++		return -EOPNOTSUPP;
++	mutex_lock(&data->update_lock);
++	if (val == 1) {
++		nct6683_msi_save(data, ch);
++		/* Keep current speed when taking over from the firmware curve. */
++		cmd = nct6683_read(data, NCT6683_REG_PWM(ch));
++	} else if (data->msi_owned & BIT(ch)) {
++		cmd = data->msi_saved_pwm[ch];
++	}
++	err = nct6683_msi_update(data, ch, val == 1, cmd);
++	if (!err && val == 2)
++		data->msi_owned &= ~BIT(ch);
++	mutex_unlock(&data->update_lock);
++	return err ? err : count;
++}
++
++SENSOR_TEMPLATE(pwm_enable, "pwm%d_enable", 0644,
++		show_pwm_enable, store_pwm_enable, 0);
++
++static umode_t nct6683_pwm_enable_is_visible(struct kobject *kobj,
++					     struct attribute *attr, int index)
++{
++	struct nct6683_data *data = dev_get_drvdata(kobj_to_dev(kobj));
++
++	return nct6683_msi_channel(data, index) ? attr->mode : 0;
++}
++
++static struct sensor_device_template *nct6683_attributes_pwm_enable[] = {
++	&sensor_dev_template_pwm_enable,
++	NULL
++};
++
++static const struct sensor_template_group nct6683_pwm_enable_group = {
++	.templates = nct6683_attributes_pwm_enable,
++	.is_visible = nct6683_pwm_enable_is_visible,
++	.base = 1,
++};
++
+ static ssize_t
+ show_pwm(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+@@ -934,11 +1120,24 @@
+ 	struct nct6683_data *data = dev_get_drvdata(dev);
+ 	int index = sattr->index;
+ 	unsigned long val;
++	int err;
+ 
+ 	if (kstrtoul(buf, 10, &val) || val > 255)
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&data->update_lock);
++	if (data->msi_control) {
++		if (!nct6683_msi_channel(data, index)) {
++			err = -EOPNOTSUPP;
++		} else if (!(nct6683_read(data, NCT6683_REG_FAN_MODE) & BIT(index))) {
++			err = -EBUSY;
++		} else {
++			nct6683_msi_save(data, index);
++			err = nct6683_msi_update(data, index, true, val);
++		}
++		mutex_unlock(&data->update_lock);
++		return err ? err : count;
++	}
+ 	nct6683_write(data, NCT6683_REG_FAN_CFG_CTRL, NCT6683_FAN_CFG_REQ);
+ 	usleep_range(1000, 2000);
+ 	nct6683_write(data, NCT6683_REG_PWM_WRITE(index), val);
+@@ -961,7 +1160,8 @@
+ 		return 0;
+ 
+ 	/* Only update pwm values for Mitac boards */
+-	if (data->customer_id == NCT6683_CUSTOMER_ID_MITAC)
++	if (data->customer_id == NCT6683_CUSTOMER_ID_MITAC ||
++	    nct6683_msi_channel(data, pwm))
+ 		return attr->mode | S_IWUSR;
+ 
+ 	return attr->mode;
+@@ -1202,7 +1402,7 @@
+ 	struct nct6683_data *data;
+ 	struct device *hwmon_dev;
+ 	struct resource *res;
+-	int groups = 0;
++	int groups = 0, err;
+ 	char build[16];
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
+@@ -1261,6 +1461,27 @@
+ 	nct6683_init_device(data);
+ 	nct6683_setup_fans(data);
+ 	nct6683_setup_sensors(data);
++	data->msi_control = data->kind == nct6687 &&
++		(data->customer_id == NCT6683_CUSTOMER_ID_MSI ||
++		 data->customer_id == NCT6683_CUSTOMER_ID_MSI2 ||
++		 data->customer_id == NCT6683_CUSTOMER_ID_MSI3) &&
++		dmi_check_system(nct6683_msi_mortar) &&
++		nct6683_read(data, NCT6683_REG_VERSION_HI) == 1 &&
++		nct6683_read(data, NCT6683_REG_VERSION_LO) == 0 &&
++		nct6683_read(data, NCT6683_REG_BUILD_YEAR) == 20 &&
++		nct6683_read(data, NCT6683_REG_BUILD_MONTH) == 5 &&
++		nct6683_read(data, NCT6683_REG_BUILD_DAY) == 7;
++	dev_info(dev, "MSI fan control %s, customer ID 0x%04x\n",
++		 data->msi_control ? "available" : "disabled", data->customer_id);
++	if (data->msi_control) {
++		err = devm_add_action_or_reset(dev, nct6683_msi_restore, data);
++		if (err)
++			return err;
++		group = nct6683_create_attr_group(dev, &nct6683_pwm_enable_group, 5);
++		if (IS_ERR(group))
++			return PTR_ERR(group);
++		data->groups[groups++] = group;
++	}
+ 
+ 	/* Register sysfs hooks */
+ 
