@@ -267,12 +267,15 @@ fn calibrate(c: &Config, stages: &str) -> Result<()> {
 fn connected_loop(c: &Config, fan: &mut Fan) -> Result<()> {
     let original = fan.original.clone().ok_or("missing baseline")?;
     let mut policy = Policy::new(c.minimum);
+    // Reconnecting to an inherited fallback PWM must also use the recovery
+    // path, rather than taking half an hour to undo a previous session's fault.
+    if fan.status()?.pwm >= c.fallback {
+        policy.sensor_fault(c.fallback);
+    }
     let start = Instant::now();
     let mut next = Instant::now();
     let mut heartbeat = Instant::now();
     let mut faults = 0;
-    let mut healthy_since = None;
-    let mut fault_latched = false;
     let result = (|| -> Result<()> {
         while !STOP.load(Ordering::Relaxed) {
             fan.process(Duration::from_millis(250))?;
@@ -284,11 +287,10 @@ fn connected_loop(c: &Config, fan: &mut Fan) -> Result<()> {
             let (temp, gpus) = match sensors {
                 Ok(readings) => readings,
                 Err(e) => {
-                    healthy_since = None;
-                    if !fault_latched {
+                    if !policy.sensor_fault_latched() {
                         eprintln!("Thermal telemetry failed; requesting fallback PWM: {e}");
                     }
-                    fault_latched = true;
+                    policy.sensor_fault(c.fallback);
                     fan.fallback(c.fallback)?;
                     atomic_json(
                         &c.state.join("status.json"),
@@ -311,7 +313,7 @@ fn connected_loop(c: &Config, fan: &mut Fan) -> Result<()> {
             }
             let (quiet, mut reason) = c.quiet();
             let now = start.elapsed().as_secs();
-            let mut target = policy.decide(
+            let target = policy.decide(
                 now,
                 temp,
                 gpu::request(&gpus),
@@ -319,15 +321,8 @@ fn connected_loop(c: &Config, fan: &mut Fan) -> Result<()> {
                 quiet,
                 s.pwm,
             );
-            if fault_latched {
-                let since = *healthy_since.get_or_insert(Instant::now());
-                if since.elapsed() < Duration::from_secs(60) {
-                    target = target.max(c.fallback);
-                    reason = "sensor-recovering".into();
-                } else {
-                    fault_latched = false;
-                    healthy_since = None;
-                }
+            if let Some(phase) = policy.recovery_phase() {
+                reason = phase.into();
             }
             let s = if !s.manual || target != s.pwm {
                 let updated = fan.set_speed(target)?;

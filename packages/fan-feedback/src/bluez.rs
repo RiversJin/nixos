@@ -88,7 +88,9 @@ impl Fan {
         if dp.get::<bool>(DEVICE, "Connected")? {
             return Err("fan already connected by another client".into());
         }
-        dp.method_call::<(), _, _, _>(DEVICE, "Connect", ())?;
+        // Own the connection attempt before sending Connect. A timed-out
+        // reply can still leave a completed or pending BlueZ connection, which
+        // must run the same Drop cleanup as failures during GATT setup.
         let mut fan = Self {
             conn,
             device,
@@ -99,6 +101,9 @@ impl Fan {
             last_write: Instant::now() - Duration::from_secs(1),
             original: None,
         };
+        fan.conn
+            .with_proxy("org.bluez", fan.device.as_str(), Duration::from_secs(20))
+            .method_call::<(), _, _, _>(DEVICE, "Connect", ())?;
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let proxy =

@@ -30,7 +30,14 @@ requests 100%, overriding presence and smoothing. The GPU guards precede
 the observed driver critical limits of edge 100 C / junction 110 C.
 
 Any missing/invalid required switch or GPU telemetry requests fallback PWM
-(configured as 100%) and requires 60 seconds of healthy readings to recover.
+(configured as 100%) and requires 60 seconds of continuously healthy readings
+to recover. It then enters `sensor-recovery-ramp`: at most -10 percentage points
+per 5 seconds, bounded by switch demand, held GPU assistance and current GPU
+demand. High-temperature guards still override recovery. Another sensor fault
+immediately requests fallback and restarts the healthy window. Recovery from
+100% to a steady 30% takes about 90–100 seconds including the healthy window,
+instead of roughly 35 minutes. Ordinary -2 points/minute decay resumes after
+recovery. A connection starting at fallback PWM uses the same recovery path.
 Fan RPM below 300 for three samples, stale BLE telemetry, or external changes
 to the controller parameters end the session and trigger fallback/reconnection.
 Every write is confirmed against fresh notifications and preserves all eleven
@@ -40,7 +47,9 @@ an unsafe stop requests fallback. Calibration has stricter thermal guards.
 Bluetooth loss is a physical limitation: the controller retains its last PWM.
 Software cannot guarantee a new full-speed command while the BLE link is down;
 no device-side disconnect watchdog has been verified. Status explicitly reports
-disconnection and whether fallback was confirmed.
+disconnection and whether fallback was confirmed. Failed or timed-out Connect
+attempts also run disconnect cleanup, so a late successful connection does not
+leave subsequent retries falsely reporting another client owns the device.
 
 ## Operation
 
