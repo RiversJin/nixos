@@ -21,6 +21,19 @@ and 100% at 100%. GPU temperatures also request airflow: edge 60/70/80/85 C
 maps to 30/45/80/100%; junction 75/85/95/100 C maps to 30/50/80/100%.
 A stopped GPU fan is valid telemetry. GPU busy and power are diagnostic only.
 
+GPU runtime suspend is a valid power state, not a sensor fault. When the
+configured GPU's amdgpu hwmon still exists and `power/runtime_status` explicitly
+reports `suspended`, its cooling request returns to the baseline; switch and
+other active GPU monitoring continue, including the existing assistance hold.
+Status marks that GPU `runtime_status: suspended` and reports unavailable
+RPM/temperature/power as `null`, not zero. The reader checks runtime state again
+after active hwmon reads, so suspension racing with a read is recognized too.
+Suspend/resume transitions are retried for up to 500 ms; a persistent transition,
+unknown/missing runtime state, missing hwmon, or unreadable/invalid active GPU
+sensor still triggers fallback. Waking restores complete readings and thermal
+guards on the next sample. Sampling never changes PCIe power settings or wakes
+a sleeping card to obtain readings.
+
 GPU assistance requires 20 seconds of sustained demand and holds increased
 airflow for 120 seconds after demand declines. Ordinary changes are limited
 to +5 percentage points per 15 seconds or -2 per 60 seconds, with a small
