@@ -4,6 +4,11 @@ let
   publicationRoot = "/home/rivers/.local/share/router-container-source";
 in
 {
+  # Apply service/routing changes inside the running Router without cycling
+  # PPPoE. Changes to the container's veths, mounts or capabilities still need
+  # an explicit container restart.
+  systemd.services."container@rivers-router".reloadIfChanged = true;
+
   systemd.tmpfiles.rules = [
     "d /sys/fs/bpf/rivers-router 0700 root root -"
     "d ${publicationRoot} 0700 rivers users -"

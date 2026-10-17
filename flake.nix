@@ -34,13 +34,13 @@
   outputs = inputs: {
     nixosConfigurations = {
       rivers-host = ((import ./hosts/rivers-host) { codex-desktop-linux = inputs.host-codex-desktop-linux; home-manager = inputs.host-home-manager; neovimConfig = inputs.host-neovimConfig; nix-index-database = inputs.host-nix-index-database; nixpkgs = inputs.host-nixpkgs; rime-ice = inputs.host-rime-ice; xremap = inputs.host-xremap; }).nixosConfigurations.rivers-host.extendModules {
-        modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-host/secrets.nix ];
+        modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-host/secrets.nix ./modules/claude-vps ];
       };
       rivers-laptop = ((import ./hosts/rivers-laptop) { home-manager = inputs.laptop-home-manager; nixpkgs = inputs.laptop-nixpkgs; nixpkgs-unstable = inputs.laptop-nixpkgs-unstable; rime-ice = inputs.laptop-rime-ice; xremap = inputs.laptop-xremap; }).nixosConfigurations.rivers-laptop.extendModules {
-        modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-laptop/secrets.nix ];
+        modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-laptop/secrets.nix ./modules/claude-vps ];
       };
       rivers-gateway = ((import ./hosts/rivers-gateway) { home-manager = inputs.gateway-home-manager; nix-index-database = inputs.gateway-nix-index-database; nix-search-tv = inputs.gateway-nix-search-tv; nixpkgs = inputs.gateway-nixpkgs; nixpkgs-unstable = inputs.gateway-nixpkgs-unstable; }).nixosConfigurations.nixos.extendModules {
-        modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-gateway/secrets.nix ];
+        modules = [ inputs.agenix.nixosModules.default ./hosts/rivers-gateway/secrets.nix ./modules/claude-vps ];
       };
     };
     packages.x86_64-linux.gitleaks = inputs.host-nixpkgs.legacyPackages.x86_64-linux.gitleaks;

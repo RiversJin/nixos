@@ -291,6 +291,8 @@ in
   hardware.enableAllFirmware = true;
 
   networking.hostName = "rivers-gateway"; # Define your hostname.
+  services.claude-vps.enable = true;
+  systemd.services.claude-vps-netns.after = [ "container@rivers-router.service" ];
   networking.wireless.enable = false;
 
   # Host networking is managed by systemd-networkd in ./modules/router-host.nix.

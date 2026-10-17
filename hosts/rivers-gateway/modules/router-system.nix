@@ -9,6 +9,7 @@ let
 in
 {
   imports = [
+    ./router-claude-vps.nix
     ./router-dae.nix
     ./router-mihomo.nix
   ];
