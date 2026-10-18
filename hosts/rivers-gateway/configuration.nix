@@ -422,6 +422,7 @@ in
   # $ nix search wget
   environment.systemPackages = with pkgs; [
     wget
+    wakeonlan
     git
     vim
     file
