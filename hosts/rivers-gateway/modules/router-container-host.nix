@@ -46,6 +46,8 @@ in
     autoStart = true;
     privateNetwork = true;
     privateUsers = "no";
+    # Let the guest's time.timeZone own /etc/localtime instead of binding the host's.
+    extraFlags = [ "--timezone=off" ];
 
     extraVeths = {
       wan0.hostBridge = "br-wan";

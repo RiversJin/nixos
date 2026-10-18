@@ -3,6 +3,12 @@
 状态：已实施，按 2026-09-16 巡检结果整理
 适用主机：`rivers-gateway`（宿主）、`rivers-router`（NixOS container，systemd-nspawn）
 
+2026-10-18：容器时区设为 `America/Los_Angeles`，与当时 VPS 出口 IP 的地理库
+时区一致，自动处理 PST/PDT。宿主机和 Claude namespace 仍使用 `Asia/Singapore`。
+容器启动参数 `--timezone=off` 关闭 nspawn 对宿主机 `/etc/localtime` 的同步。
+容器与宿主机共享系统时钟；这里仅调整时区显示，不改系统时间。排查跨环境日志时
+优先使用 `journalctl --utc` 或显式携带 UTC offset 的时间戳。
+
 ## 1. 架构
 
 ```text
@@ -28,6 +34,19 @@ router-mihomo-update.timer (容器内, 每 2min)
 ```
 
 相关 nix 模块：`modules/router-mihomo.nix`、`modules/router-proxy-sync.nix`、`modules/router-health.nix`。
+
+### 浏览器 SOCKS5 入口（2026-10-17）
+
+浏览器代理填写 `192.168.50.1:7894`、SOCKS5，并启用通过 SOCKS5 解析域名。
+此入口使用 Mihomo 现有 `rules` 分流，不指定固定节点；本子网内无需账号密码。
+只监听 IPv4 TCP。独立的 `mihomo_browser_guard` 防火墙仅允许从 `lan0` 进入、
+来源为 `192.168.50.0/24` 的连接，阻断其他来源、IPv6 和 UDP。
+访问限制属于代理入口；Mihomo 原有出站和 DNS 的 IPv6 策略保持原样。
+
+生成器源码为 `sing-box-static-sub/src/config/template-mihomo.js`，对应补丁保存在
+`patches/browser-lan-generator.patch`，应在 `claude-vps-generator.patch` 之后应用。
+本次沿用当前系统的锁定依赖构建，快照为
+`/home/rivers/.local/state/claude-vps-lan-setup/20261017-100002/build-source`。
 
 ## 2. 巡检流程（在 rivers-gateway 上执行）
 

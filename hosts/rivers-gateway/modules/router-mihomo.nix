@@ -116,6 +116,20 @@ let
   };
 in
 {
+  # LAN is trusted by the general firewall; restrict the browser SOCKS listener
+  # to this IPv4 subnet. Keep the port aligned with template-mihomo.js.
+  networking.nftables.tables.mihomo_browser_guard = {
+    family = "inet";
+    content = ''
+      chain input {
+        type filter hook input priority -11; policy accept;
+        iifname "lan0" ip saddr 192.168.50.0/24 ip daddr 192.168.50.1 tcp dport 7894 counter accept
+        tcp dport 7894 counter drop
+        udp dport 7894 counter drop
+      }
+    '';
+  };
+
   users.groups.mihomo = { };
   users.users.mihomo = {
     isSystemUser = true;
@@ -148,7 +162,11 @@ in
   systemd.services.mihomo = {
     description = "Mihomo Router proxy and DNS engine";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" ];
+    requires = [ "nftables.service" ];
+    after = [
+      "network.target"
+      "nftables.service"
+    ];
     conflicts = [ "sing-box.service" ];
     serviceConfig = {
       Type = "simple";

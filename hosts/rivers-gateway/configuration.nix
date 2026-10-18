@@ -292,6 +292,7 @@ in
 
   networking.hostName = "rivers-gateway"; # Define your hostname.
   services.claude-vps.enable = true;
+  services.claude-vps.allowHostSSH = true;
   systemd.services.claude-vps-netns.after = [ "container@rivers-router.service" ];
   networking.wireless.enable = false;
 

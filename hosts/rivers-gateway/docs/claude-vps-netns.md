@@ -16,7 +16,8 @@ claude-net / claude-vps
 ```
 
 VPS 节点为 TCP-only。namespace 内的 Unbound 在 `127.0.0.1:53` 接受 DNS，
-上游使用经 VPS 转发的 DNS-over-TLS。外部 UDP、IPv6 和私网目标不放行。
+上游使用经 VPS 转发的 DNS-over-TLS。外部 UDP、IPv6 和私网目标不放行，
+仅保留下述宿主机 SSH 例外。
 这也意味着局域网 MCP、宿主机 localhost、QUIC 等不会自动绕过隔离。
 
 `fleet.nix` 集中登记地址和 Router 回程路由：
@@ -57,10 +58,32 @@ claude-vps
 登录流程中单独打开的外部浏览器不自动进入 namespace；需要相同出口时，应给该浏览器
 另行配置同一 VPS 路径。
 
-严格入口禁止提权、切换 namespace、访问宿主机 Unix socket，以及跨进程调试等
-常见绕过途径。依赖宿主机 Docker/Nix daemon/SSH agent 的工具需要单独设计受限接入，
-不能直接开放宿主机管理 socket。普通文件访问权限仍属于原用户，不能将本模块视为
-对恶意代码的完整文件系统沙盒。
+入口禁止本进程提权、切换 namespace、访问宿主机 Unix socket，以及跨进程调试。
+普通文件访问权限仍属于原用户，不能将本模块视为对恶意代码的完整文件系统沙盒。
+
+## SSH 回连宿主机
+
+`rivers-gateway` 已启用 `services.claude-vps.allowHostSSH`。仅允许从 namespace
+地址 `10.203.0.2` 经 `cvps-host` 访问宿主机 `10.203.0.1:22`；其他宿主机端口及
+局域网目标继续阻断。独立的 `claude-vps-host-ssh.service` 维护此例外，无需重启会话。
+
+在 Claude 的 Shell 中执行：
+
+```sh
+ssh -F /dev/null rivers@10.203.0.1 'systemctl --user status deepseek-harness.service --no-pager'
+ssh -F /dev/null rivers@10.203.0.1 'systemctl --user restart your-service.service'
+```
+
+使用现有用户 SSH 密钥；主机公钥已通过本机 `/etc/ssh/ssh_host_ed25519_key.pub`
+核验并加入 `~/.ssh/known_hosts`。隔离环境内的 `localhost` 不代表宿主机。
+
+这是普通 rivers SSH 会话，具有该用户的宿主机权限；远程执行的命令和用户服务使用
+宿主机网络，不继承 Claude namespace。Claude Code 本体仍应通过 `claude-vps`
+启动，其 API、遥测和更新连接继续固定经 VPS。此设计信任模型不会借 SSH 将客户端
+迁出 namespace，不再承诺阻止主动绕过。遥测开关未作调整。
+
+2026-10-18 的 SSH 例外使用当前运行系统的锁定依赖构建，快照保存在
+`/home/rivers/.local/state/claude-vps-host-ssh-setup/20261018-202343/build-source`。
 
 ## 启用其他机器
 
@@ -80,7 +103,7 @@ services.claude-vps.enable = true;
 - `ip rule`、`ip route show table 20300` 检查固定路由和不可达后备路由。
 - `claude-net curl ...` 的出口应与专用 VPS listener 的出口一致。
 - 专用代理入口故障时，请求应失败；直接转发保护必须独立验证。
-- IPv6、外部 UDP、宿主机服务和提权尝试应被阻止。
+- IPv6、外部 UDP、除 SSH 例外外的宿主机服务，以及本进程提权尝试应被阻止。
 
 Router 配置切换使用容器内重载，保留 PPPoE 连接。变更容器边界（veth、挂载、
 capabilities）时仍需显式重启容器。

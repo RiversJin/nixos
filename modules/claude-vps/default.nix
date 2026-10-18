@@ -123,6 +123,30 @@ let
       nft delete table inet claude_vps_host 2>/dev/null || true
     '';
   };
+  hostSSHRule = pkgs.writeShellApplication {
+    name = "claude-vps-host-ssh-rule";
+    runtimeInputs = with pkgs; [
+      jq
+      nftables
+    ];
+    text = ''
+      action="''${1:-install}"
+      [[ "$action" == install || "$action" == remove ]]
+      if ! chain="$(nft -j list chain inet claude_vps_host input 2>/dev/null)"; then
+        [[ "$action" == remove ]] && exit 0
+        echo "Claude namespace firewall is not ready" >&2
+        exit 1
+      fi
+      # Replace only our exception in one transaction; preserve the network guard.
+      {
+        jq -r '.nftables[] | .rule? | select(.comment == "claude-vps-host-ssh") |
+          "delete rule inet claude_vps_host input handle \(.handle)"' <<<"$chain"
+        if [[ "$action" == install ]]; then
+          echo 'insert rule inet claude_vps_host input iifname "${hostLink}" ip saddr ${cfg.namespaceAddress} ip daddr ${cfg.hostAddress} tcp dport 22 counter accept comment "claude-vps-host-ssh"'
+        fi
+      } | nft -f -
+    '';
+  };
   enter = pkgs.writeShellApplication {
     name = "claude-vps-enter";
     runtimeInputs = with pkgs; [
@@ -215,6 +239,7 @@ in
       type = lib.types.str;
       default = "rivers";
     };
+    allowHostSSH = lib.mkEnableOption "SSH access to the host's veth address on port 22";
     lanAddress = lib.mkOption {
       type = lib.types.str;
       default = if peer == null then "" else peer.lanAddress;
@@ -236,6 +261,12 @@ in
       {
         assertion = peer != null;
         message = "Register this host in modules/claude-vps/fleet.nix before enabling services.claude-vps.";
+      }
+      {
+        assertion =
+          !cfg.allowHostSSH
+          || (config.services.openssh.enable && builtins.elem 22 config.services.openssh.ports);
+        message = "Claude host SSH access requires the host SSH server on port 22.";
       }
     ];
 
@@ -298,6 +329,27 @@ in
         ];
         Restart = "on-failure";
         RestartSec = "3s";
+      };
+    };
+
+    # A separate unit adds/removes the exception without restarting active sessions.
+    systemd.services.claude-vps-host-ssh = lib.mkIf cfg.allowHostSSH {
+      description = "Allow Claude namespace SSH access to its host";
+      wantedBy = [
+        "multi-user.target"
+        "claude-vps-netns.service"
+      ];
+      bindsTo = [ "claude-vps-netns.service" ];
+      after = [
+        "claude-vps-netns.service"
+        "sshd.service"
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${hostSSHRule}/bin/claude-vps-host-ssh-rule install";
+        ExecReload = "${hostSSHRule}/bin/claude-vps-host-ssh-rule install";
+        ExecStop = "${hostSSHRule}/bin/claude-vps-host-ssh-rule remove";
       };
     };
   };

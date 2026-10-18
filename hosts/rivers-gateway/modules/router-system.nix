@@ -14,6 +14,9 @@ in
     ./router-mihomo.nix
   ];
 
+  # Match the VPS egress IP's reported time zone; the host keeps its own zone.
+  time.timeZone = "America/Los_Angeles";
+
   networking = {
     hostName = "rivers-router";
     domain = localDomain;
