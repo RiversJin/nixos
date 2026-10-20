@@ -185,3 +185,9 @@ window-rule {
     match app-id="^nemo$" title="(?i)(properties|属性)$"
     open-floating true
 }
+
+// Float QQ's image viewer without affecting the main window.
+window-rule {
+    match app-id="^QQ$" title="^图片查看器$"
+    open-floating true
+}
