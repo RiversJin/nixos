@@ -3,8 +3,8 @@
 状态：已实施，按 2026-09-16 巡检结果整理
 适用主机：`rivers-gateway`（宿主）、`rivers-router`（NixOS container，systemd-nspawn）
 
-2026-10-18：容器时区设为 `America/Los_Angeles`，与当时 VPS 出口 IP 的地理库
-时区一致，自动处理 PST/PDT。宿主机和 Claude namespace 仍使用 `Asia/Singapore`。
+2026-10-22：纠正时区作用范围，Router 容器恢复为 `Asia/Singapore`，与宿主机一致。
+`America/Los_Angeles` 改为仅作用于 `claude-net` / `claude-vps` 启动的会话，自动处理 PST/PDT。
 容器启动参数 `--timezone=off` 关闭 nspawn 对宿主机 `/etc/localtime` 的同步。
 容器与宿主机共享系统时钟；这里仅调整时区显示，不改系统时间。排查跨环境日志时
 优先使用 `journalctl --utc` 或显式携带 UTC offset 的时间戳。

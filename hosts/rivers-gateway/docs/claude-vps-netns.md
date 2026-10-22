@@ -54,6 +54,9 @@ claude-vps
 
 命令保留工作目录，以配置的普通用户运行。启动器清除代理环境变量，使用专用 DNS，
 不继承普通 Shell 的自定义环境；应用凭据可由应用自己的配置文件加载。
+会话时区由 `services.claude-vps.timeZone` 设置，默认 `America/Los_Angeles`。
+启动器同时设置 `TZ` / `TZDIR` 和会话内的 `/etc/localtime`；宿主机和 Router 保持
+`Asia/Singapore`。配置更新只影响新启动的会话，已有 Claude 会话需退出并重新启动。
 会话退出时，其 systemd 单元内剩余子进程一并停止。
 登录流程中单独打开的外部浏览器不自动进入 namespace；需要相同出口时，应给该浏览器
 另行配置同一 VPS 路径。

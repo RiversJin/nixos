@@ -14,8 +14,8 @@ in
     ./router-mihomo.nix
   ];
 
-  # Match the VPS egress IP's reported time zone; the host keeps its own zone.
-  time.timeZone = "America/Los_Angeles";
+  # Keep Router logs on the host's time zone; Claude sessions set their own.
+  time.timeZone = "Asia/Singapore";
 
   networking = {
     hostName = "rivers-router";

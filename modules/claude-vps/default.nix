@@ -174,7 +174,7 @@ let
         --property=BindsTo=claude-vps-netns.service \
         --property='After=claude-vps-netns.service claude-vps-dns.service' \
         --property=NetworkNamespacePath=/run/netns/${ns} \
-        --property=BindReadOnlyPaths=${resolver}:/etc/resolv.conf \
+        --property="BindReadOnlyPaths=${resolver}:/etc/resolv.conf ${pkgs.tzdata}/share/zoneinfo/${cfg.timeZone}:/etc/localtime" \
         --property=NoNewPrivileges=yes \
         --property=CapabilityBoundingSet= \
         --property=RestrictNamespaces=yes \
@@ -195,6 +195,8 @@ let
         --working-directory="$directory" \
         --setenv=HOME=${lib.escapeShellArg userHome} \
         --setenv=PATH=${lib.escapeShellArg childPath} \
+        --setenv=TZ=${lib.escapeShellArg cfg.timeZone} \
+        --setenv=TZDIR=${pkgs.tzdata}/share/zoneinfo \
         --setenv=LANG=C.UTF-8 --setenv="TERM=$terminal" \
         -- ${pkgs.coreutils}/bin/env \
         -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u NO_PROXY \
@@ -240,6 +242,11 @@ in
       default = "rivers";
     };
     allowHostSSH = lib.mkEnableOption "SSH access to the host's veth address on port 22";
+    timeZone = lib.mkOption {
+      type = lib.types.str;
+      default = "America/Los_Angeles";
+      description = "Time zone inside Claude sessions; independent of the host and Router.";
+    };
     lanAddress = lib.mkOption {
       type = lib.types.str;
       default = if peer == null then "" else peer.lanAddress;
