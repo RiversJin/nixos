@@ -8,11 +8,13 @@ let
     name = "router-health-check";
     runtimeInputs = with pkgs; [
       bind.dnsutils
+      bpftools
       coreutils
       curl
       gawk
       gnugrep
       iproute2
+      jq
       systemd
       util-linux
     ];
@@ -105,13 +107,28 @@ let
       fi
 
       dae=down
-      if systemctl -M ${machine} is-active --quiet dae.service &&
-         in_router tc qdisc show dev lan0 | grep -q 'clsact' &&
-         in_router tc filter show dev lan0 ingress | grep -q 'dae_'; then
+      # TCX attachments are invisible to `tc filter show`. Query the actual
+      # LAN hooks, including both directions, through bpftool instead.
+      if ! systemctl -M ${machine} is-active --quiet dae.service; then
+        maybe_heal dae dae.service
+      elif dae_hooks="$(in_router bpftool -j net show dev lan0)" &&
+           jq -e '
+             [.[].tc[]? | select(.devname == "lan0")] |
+             any(.[];
+               (.kind == "tcx/ingress" or .kind == "clsact/ingress") and
+               ((.name // "") | startswith("tproxy_lan_ing"))) and
+             any(.[];
+               (.kind == "tcx/egress" or .kind == "clsact/egress") and
+               ((.name // "") | startswith("tproxy_lan_egr")))
+           ' <<<"$dae_hooks" >/dev/null; then
         dae=ok
         reset_failure dae
       else
-        maybe_heal dae dae.service
+        # An incompatible probe must not tear down working connections.
+        # Only a confirmed inactive service is eligible for automatic restart.
+        dae=unknown
+        reset_failure dae
+        echo 'dae is active but LAN BPF hooks could not be verified; skipping automatic restart' >&2
       fi
 
       upstream=down
@@ -124,9 +141,9 @@ let
       fi
 
       overall=OK
-      if [[ "$ppp" != up || "$mihomo" != ok || "$dnsmasq" != ok || "$dae" != ok ]]; then
+      if [[ "$ppp" != up || "$mihomo" != ok || "$dnsmasq" != ok || "$dae" == down ]]; then
         overall=DOWN
-      elif [[ "$upstream" != ok ]]; then
+      elif [[ "$upstream" != ok || "$dae" != ok ]]; then
         overall=DEGRADED
       fi
 

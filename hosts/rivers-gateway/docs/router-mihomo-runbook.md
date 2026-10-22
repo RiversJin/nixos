@@ -80,6 +80,13 @@ curl -s -H "$AUTH" "$API/connections" \
 容器内 service 状态需要 root（`systemctl -M rivers-router status mihomo` 非 root 不可用）；
 用 API 巡检即可覆盖大部分健康信号。
 
+### dae 健康检查（2026-10-22）
+
+dae 使用 TCX 时，`tc filter show dev lan0 ingress` 不显示其挂载，不能据此判定故障。
+`router-health-check` 使用 `bpftool -j net show dev lan0` 核验 dae 的入站和出站 BPF 程序。
+服务运行中但挂载检查不通过时，报告 `DEGRADED dae=unknown` 并保留连接；仅确认
+dae 服务未运行时才按原有失败次数与冷却时间尝试重启。状态见 `/run/router-health-status`。
+
 ## 3. VPS 前置跳板结构
 
 ```text
