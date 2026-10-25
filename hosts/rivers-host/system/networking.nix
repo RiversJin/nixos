@@ -40,8 +40,12 @@
     libimobiledevice
   ];
 
-  # Wake on LAN
-  networking.interfaces.enp42s0.wakeOnLan.enable = true;
+  # Wake on LAN for the B850 onboard NIC, including NetworkManager reconnects.
+  networking.interfaces.eno1.wakeOnLan.enable = true;
+  networking.networkmanager.settings.connection-eno1-wol = {
+    match-device = "interface-name:eno1";
+    "ethernet.wake-on-lan" = 64; # Magic packet (NM_SETTING_WIRED_WAKE_ON_LAN_MAGIC).
+  };
 
   # Tailscale (connect to self-hosted Headscale)
   services.tailscale = {

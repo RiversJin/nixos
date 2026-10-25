@@ -30,8 +30,8 @@ in
             preferLocalBuild = true;
             allowSubstitutes = false;
             postPatch = (old.postPatch or "") + ''
-              if ! grep -q 'AMD Ryzen 7 5800X 8-Core Processor' /proc/cpuinfo; then
-                echo "This native kernel must be built on the rivers-host Ryzen 7 5800X." >&2
+              if ! grep -Fq 'AMD Ryzen 9 9950X3D2 16-Core Processor' /proc/cpuinfo; then
+                echo "This native kernel must be built on the rivers-host Ryzen 9 9950X3D2." >&2
                 exit 1
               fi
             '';
@@ -55,7 +55,7 @@ in
       name = "rivers-host-kernel-tuning";
       patch = null;
       structuredExtraConfig = {
-        # Ryzen 7 5800X has 16 logical CPUs; leave room for a 32-thread CPU.
+        # Ryzen 9 9950X3D2 has 16 cores and 32 logical CPUs.
         NR_CPUS = lib.mkForce (lib.kernel.freeform "32");
         X86_NATIVE_CPU = lib.mkForce lib.kernel.yes;
         LTO_NONE = lib.mkForce lib.kernel.yes;
