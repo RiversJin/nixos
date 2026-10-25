@@ -4,6 +4,31 @@
 }:
 
 let
+  displayGpuProfile = ''
+    # Follow the GPU driving DisplayPort instead of a PCI address or GPU index.
+    # Preserve explicit overrides; do not guess when DP outputs span multiple GPUs.
+    if [ -z "''${DRI_PRIME+x}" ]; then
+      game_display_gpu=""
+      for game_output in /sys/class/drm/card*-DP-*/enabled; do
+        [ -r "$game_output" ] && [ "$(cat "$game_output")" = enabled ] || continue
+        game_card="''${game_output%/*}"
+        game_card="''${game_card##*/}"
+        game_card="''${game_card%%-*}"
+        game_gpu="$(readlink -f "/sys/class/drm/$game_card/device")"
+        game_gpu="''${game_gpu##*/}"
+        if [ -n "$game_display_gpu" ] && [ "$game_display_gpu" != "$game_gpu" ]; then
+          game_display_gpu=""
+          break
+        fi
+        game_display_gpu="$game_gpu"
+      done
+      if [ -n "$game_display_gpu" ]; then
+        export DRI_PRIME="pci-''${game_display_gpu//[:.]/_}!"
+      fi
+      unset game_display_gpu game_output game_card game_gpu
+    fi
+  '';
+
   gamemodeWithAutoRpath =
     pkg:
     pkg.overrideAttrs (old: {
@@ -46,6 +71,14 @@ in
   # Lutris without Steam FHS nesting (avoids symlink depth issues with umu-launcher)
   environment.systemPackages = [
     (lutrisPkgs.lutris.override {
+      buildFHSEnv =
+        args:
+        lutrisPkgs.buildFHSEnv (
+          args
+          // {
+            profile = (args.profile or "") + displayGpuProfile;
+          }
+        );
       lutris-unwrapped = lutrisUnwrapped;
       steamSupport = false;
       extraPkgs =
@@ -111,30 +144,7 @@ in
       proton-ge-bin
     ];
     package = pkgs.steam.override {
-      extraProfile = ''
-        # Keep game rendering on the GPU driving the displays, even if PCI numbering changes.
-        # Preserve an explicit per-launch override; leave mixed-GPU display layouts alone.
-        if [ -z "''${DRI_PRIME+x}" ]; then
-          steam_display_gpu=""
-          for steam_output in /sys/class/drm/card*-*/enabled; do
-            [ -r "$steam_output" ] && [ "$(cat "$steam_output")" = enabled ] || continue
-            steam_card="''${steam_output%/*}"
-            steam_card="''${steam_card##*/}"
-            steam_card="''${steam_card%%-*}"
-            steam_gpu="$(readlink -f "/sys/class/drm/$steam_card/device")"
-            steam_gpu="''${steam_gpu##*/}"
-            if [ -n "$steam_display_gpu" ] && [ "$steam_display_gpu" != "$steam_gpu" ]; then
-              steam_display_gpu=""
-              break
-            fi
-            steam_display_gpu="$steam_gpu"
-          done
-          if [ -n "$steam_display_gpu" ]; then
-            export DRI_PRIME="pci-''${steam_display_gpu//[:.]/_}!"
-          fi
-          unset steam_display_gpu steam_output steam_card steam_gpu
-        fi
-      '';
+      extraProfile = displayGpuProfile;
       extraBwrapArgs = [
         "--bind /mnt/games /mnt/games"
       ];
