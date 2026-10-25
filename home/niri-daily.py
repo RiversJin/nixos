@@ -186,6 +186,7 @@ def render(text, colors, alpha, image):
 
 
 def activate(state, base, images, metadata):
+    previous = (state / 'current').resolve()
     image = images[PRIMARY]
     colors, alpha = palette(image)
     generation = Path(tempfile.mkdtemp(prefix='theme-', dir=state))
@@ -210,12 +211,12 @@ def activate(state, base, images, metadata):
     except Exception:
         shutil.rmtree(generation)
         raise
-    # Bound only our generated cache; keep current and previous themes for recovery.
-    generations = sorted(state.glob('theme-*'), key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in generations[2:]:
-        if old.is_dir():
+    # Keep by identity: clock changes can make older directories look newer.
+    retained = {generation.resolve(), previous}
+    for old in state.glob('theme-*'):
+        if old.is_dir() and old.resolve() not in retained:
             shutil.rmtree(old)
-    protected = {p.resolve() for p in [p for g in generations[:2] for p in g.glob('wallpaper*')] if p.exists()}
+    protected = {p.resolve() for g in retained for p in g.glob('wallpaper*') if p.exists()}
     cache = state / 'images'
     if cache.exists():
         images = sorted((p for p in cache.iterdir() if p.suffix in ('.png', '.jpg', '.jpeg', '.webp')),
