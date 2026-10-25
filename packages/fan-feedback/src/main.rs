@@ -40,8 +40,8 @@ impl Default for Config {
         Self {
             address: "0D:B3:AF:43:2C:DB".into(),
             adapter: "hci0".into(),
-            pci: "0000:40:00.0".into(),
-            gpu_pci: vec!["0000:31:00.0".into(), "0000:3a:00.0".into()],
+            pci: "0000:16:00.0".into(),
+            gpu_pci: vec!["0000:07:00.0".into(), "0000:10:00.0".into()],
             minimum: 30,
             fallback: 100,
             presence: "/run/user/1000/fan-feedback-presence".into(),
@@ -80,7 +80,7 @@ impl Config {
         if !(30..=45).contains(&c.minimum) || !(80..=100).contains(&c.fallback) {
             return Err("unsafe PWM limits".into());
         }
-        if !(20..=50).contains(&c.host.minimum) || !(3..=5).contains(&c.host.channel) {
+        if !(20..=50).contains(&c.host.minimum) || !host::valid_channel(c.host.channel) {
             return Err("unsafe host fan configuration".into());
         }
         if c.address.split(':').count() != 6

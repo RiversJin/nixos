@@ -86,11 +86,10 @@ in
   ];
   boot.extraModulePackages = [
     (config.boot.kernelPackages.callPackage ../../../packages/pex88096-hwmon { })
-    (config.boot.kernelPackages.callPackage ../../../packages/nct6683-msi { })
   ];
-  boot.blacklistedKernelModules = [ "nct6683" ];
   boot.kernelModules = [
-    "nct6683_msi"
+    # B850-A NEO uses NCT6701D (0xd806), exposed as nct6799 by this kernel.
+    "nct6775"
     "pex88096_hwmon"
   ];
   hardware.enableAllFirmware = true;

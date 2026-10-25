@@ -94,30 +94,46 @@ control or PCIe power settings.
 ## Separate host case
 
 The CPU/memory host case is physically separate from the switch/GPU enclosure.
-`host-fan-feedback.service` controls only motherboard **pwm3/fan3**, with its
-own process, sensor loop and crash recovery. CPU and pump fan control stays
-with BIOS. The two daemons share desktop presence and the mode override.
+`host-fan-feedback.service` controls only motherboard **pwm1/fan1**, with its
+own process, sensor loop and crash recovery. On the ASUS ROG STRIX B850-A GAMING
+WIFI7 S NEO, isolated full-speed tests and physical observation confirmed fan1
+is the case fan and fan2 is the CPU fan. CPU and pump fan control stays with
+BIOS. The daemon checks exact board DMI identity and refuses every channel
+except 1. The two daemons share desktop presence and the mode override.
+
+The Super-I/O ID is 0xd806 (NCT6701D); Linux 7.2.9 exposes its compatible
+interface as `nct6799` through the stock `nct6775` driver at
+`/sys/devices/platform/nct6775.656/hwmon`. No force_id or ACPI resource override
+is needed. The MSI-specific driver is no longer loaded.
 
 Quiet mode has a **20% minimum**. CPU Tctl 45/55/65/75/80/85 C requests
-20/45/60/75/85/100%; motherboard maximum 40/45/50/55/60/65 C requests
+20/45/60/75/85/100%; maximum DDR5 SPD temperature 40/45/50/55/60/65 C requests
 20/45/60/75/85/100%. Away/cool mode has a 45% minimum. Temperatures are
 smoothed independently: CPU uses a 60-second time constant to suppress short
-junction-temperature bursts, while the board retains 15 seconds. Elevated
+junction-temperature bursts, while memory retains 15 seconds. Elevated
 demand persists for 120 seconds. Ordinary CPU-driven increases are limited to
-+3 points/30 seconds; a board request covering the full held target retains
++3 points/30 seconds; a memory request covering the full held target retains
 +5 points/15 seconds. Decreases remain -2 points/60 seconds. Raw CPU >=80 C or
-board >=60 C immediately requests at least 85%; CPU >=85 C or board >=65 C
+memory >=60 C immediately requests at least 85%; CPU >=85 C or memory >=65 C
 requests 100%. These are conservative control thresholds, not chip ratings.
 
-Board input uses the maximum of all six enabled analog channels. Firmware
-labels do not identify DIMM sensors, so this is a board hot-area proxy rather
-than a memory temperature measurement. The host loop does not use switch or
-GPU load. RPM <300 for three samples, invalid sensors, or a failed write ends
-the session and restores BIOS control before restarting.
+Memory input requires both installed DIMMs' enabled `spd5118` digital sensors;
+a missing, disabled or invalid sensor is a fault. It does not use the unverified
+analog temperature labels of the NCT6799 compatibility interface. The host
+loop does not use switch or GPU load. RPM <300 for three samples, invalid
+sensors, or a failed write ends the session and restores BIOS before restarting.
 
-The narrowly scoped udev rule grants `rivers` only pwm3 and pwm3_enable write
-access. Ownership is recorded before takeover; normal exit restores BIOS,
-and systemd ExecStopPost does the same after a crash, including SIGKILL.
+The narrowly scoped udev rule grants `rivers` only pwm1 and pwm1_enable write
+access. Board identity, channel and the original automatic mode are recorded
+atomically before takeover. Normal exit restores that exact mode (currently
+Smart Fan IV / 5), and systemd ExecStopPost does the same after a crash,
+including SIGKILL. Legacy or mismatched ownership markers are rejected.
+Restoration also publishes `restored-bios` status, so the restart delay does not
+leave the last manual-control snapshot visible after a crash.
+Takeover initializes manual PWM from the current automatic output, rather than
+reviving a previous full-speed manual command stored in the chip.
+The kernel reports manual full speed (255/255) as pwm_enable=0; this is accepted
+as full-speed control rather than treated as an external mode change.
 The kernel module has no independent userspace-death watchdog.
 
 ```
@@ -126,4 +142,4 @@ journalctl -u host-fan-feedback.service
 ```
 
 `fan-feedback status` also includes host case status. Stopping the host service
-returns fan3 to BIOS; it does not stop the BLE enclosure controller.
+returns fan1 to BIOS; it does not stop the BLE enclosure controller.

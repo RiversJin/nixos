@@ -4,14 +4,14 @@ let
   configuration = pkgs.writeText "fan-feedback.conf" ''
     address=0D:B3:AF:43:2C:DB
     adapter=hci0
-    pci=0000:40:00.0
-    gpu_pci=0000:31:00.0,0000:3a:00.0
+    pci=0000:16:00.0
+    gpu_pci=0000:07:00.0,0000:10:00.0
     minimum_pwm=30
     fallback_pwm=100
     presence_file=/run/user/1000/fan-feedback-presence
     host_state_dir=/run/host-fan-feedback
     host_minimum_pwm=20
-    host_channel=3
+    host_channel=1
     state_dir=/run/fan-feedback
   '';
 in
@@ -21,12 +21,15 @@ in
 
   # Grant only the confirmed host case header; CPU and pump stay root-owned.
   services.udev.extraRules = ''
-    ACTION=="add", SUBSYSTEM=="hwmon", DEVPATH=="/devices/platform/nct6683.2592/hwmon/hwmon*", ATTR{name}=="nct6687", ATTR{pwm3_enable}=="[12]", RUN+="${pkgs.coreutils}/bin/chown rivers:users /sys%p/pwm3 /sys%p/pwm3_enable"
+    ACTION=="add", SUBSYSTEM=="hwmon", DEVPATH=="/devices/platform/nct6775.656/hwmon/hwmon*", ATTR{name}=="nct6799", ATTR{pwm1_enable}=="[01235]", RUN+="${pkgs.coreutils}/bin/chown rivers:users /sys%p/pwm1 /sys%p/pwm1_enable"
   '';
 
   systemd.services.host-fan-feedback = {
-    description = "Independent CPU and motherboard feedback for host case fan";
+    description = "Independent CPU and DDR5 feedback for host case fan";
     wantedBy = [ "multi-user.target" ];
+    # On this board, live isolated speed tests confirmed fan1 is the case fan
+    # and fan2 is the CPU fan. The daemon independently checks exact DMI identity.
+    unitConfig.ConditionPathExists = "/sys/devices/platform/nct6775.656/hwmon";
     after = [
       "systemd-modules-load.service"
       "systemd-udev-trigger.service"
@@ -50,7 +53,7 @@ in
       PrivateTmp = true;
       PrivateDevices = true;
       ProtectKernelTunables = true;
-      ReadWritePaths = [ "/sys/devices/platform/nct6683.2592/hwmon" ];
+      ReadWritePaths = [ "/sys/devices/platform/nct6775.656/hwmon" ];
       ProtectKernelModules = true;
       ProtectControlGroups = true;
       RestrictSUIDSGID = true;
