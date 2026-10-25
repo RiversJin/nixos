@@ -283,6 +283,7 @@ in
     ./modules/router-container-host.nix
     ./modules/router-proxy-sync.nix
     ./modules/router-health.nix
+    ./modules/ups.nix
   ];
 
   # Bootloader.
