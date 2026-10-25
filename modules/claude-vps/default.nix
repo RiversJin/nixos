@@ -27,6 +27,16 @@ let
     nameserver 127.0.0.1
     options timeout:3 attempts:2
   '';
+  # A bind mount follows the host's localtime symlink, leaving its timezone
+  # name visible. A confext replaces the directory entry with a regular file.
+  timeZoneOverlay = pkgs.runCommand "claude-vps-timezone" { } ''
+    mkdir -p "$out/etc/extension-release.d"
+    cp ${pkgs.tzdata}/share/zoneinfo/${lib.escapeShellArg cfg.timeZone} "$out/etc/localtime"
+    cat > "$out/etc/extension-release.d/extension-release.$(basename "$out")" <<EOF
+    ID=nixos
+    VERSION_ID=${config.system.nixos.release}
+    EOF
+  '';
   dnsConfig = pkgs.writeText "claude-vps-unbound.conf" ''
     server:
       interface: 127.0.0.1
@@ -174,7 +184,8 @@ let
         --property=BindsTo=claude-vps-netns.service \
         --property='After=claude-vps-netns.service claude-vps-dns.service' \
         --property=NetworkNamespacePath=/run/netns/${ns} \
-        --property="BindReadOnlyPaths=${resolver}:/etc/resolv.conf ${pkgs.tzdata}/share/zoneinfo/${cfg.timeZone}:/etc/localtime" \
+        --property="BindReadOnlyPaths=${resolver}:/etc/resolv.conf" \
+        --property=ExtensionDirectories=${timeZoneOverlay} \
         --property=NoNewPrivileges=yes \
         --property=CapabilityBoundingSet= \
         --property=RestrictNamespaces=yes \
