@@ -181,7 +181,7 @@ in
       dhcp-authoritative = true;
       dhcp-range = [ "192.168.50.100,192.168.50.199,12h" ];
       dhcp-host = [
-        "04:7c:16:7c:32:e8,rivers-host,192.168.50.10,12h"
+        "b0:82:e2:c5:82:de,rivers-host,192.168.50.10,12h"
         "4c:49:6c:32:63:ab,rivers-laptop,192.168.50.11,12h"
       ];
       dhcp-option = [

@@ -147,7 +147,7 @@ sudo systemctl -M rivers-router status router-dae-update.timer
 只有以下 MAC 被透明代理策略接管：
 
 ```text
-04:7c:16:7c:32:e8  rivers-host
+b0:82:e2:c5:82:de  rivers-host
 da:1a:db:85:ff:67  rivers-gateway
 4c:49:6c:32:63:ab  rivers-laptop
 74:38:22:95:34:e7  Xiaomi-15-Pro
