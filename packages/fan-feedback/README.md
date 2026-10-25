@@ -54,8 +54,17 @@ recovery. A connection starting at fallback PWM uses the same recovery path.
 Fan RPM below 300 for three samples, stale BLE telemetry, or external changes
 to the controller parameters end the session and trigger fallback/reconnection.
 Every write is confirmed against fresh notifications and preserves all eleven
-controller parameter bytes. A safe normal stop restores the initial state;
-an unsafe stop requests fallback. Calibration has stricter thermal guards.
+controller parameter bytes. A normal daemon stop rereads the switch, GPUs and
+controller, then leaves manual PWM at the maximum of the current output, fresh
+switch/GPU demand and held GPU assistance. It never lowers airflow or replays a
+historical initial PWM on exit, so an inherited 100% fallback does not get saved
+and restored on every restart. Switch >=75 C, GPU thermal protection, unresolved
+sensor recovery, missing/invalid readings or low RPM still request fallback.
+A failed handoff also attempts fallback. The `controller-stop` journal record
+includes the exit policy, initial/previous/target PWM, confirmation and any
+telemetry or command error. No feedback runs while the daemon is stopped; the
+controller retains that manual PWM until control resumes. Calibration still
+restores its initial state when safe and has stricter thermal guards.
 
 Bluetooth loss is a physical limitation: the controller retains its last PWM.
 Software cannot guarantee a new full-speed command while the BLE link is down;

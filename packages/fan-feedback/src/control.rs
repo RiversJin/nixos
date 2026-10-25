@@ -78,6 +78,37 @@ impl Policy {
             )
         }
     }
+    pub fn stop_target(
+        &self,
+        temp: f64,
+        gpu_request: u8,
+        gpu_protection: u8,
+        quiet: bool,
+        current: u8,
+        fallback: u8,
+    ) -> (u8, &'static str) {
+        // There will be no feedback after disconnecting. Never lower airflow
+        // on exit, and cover demand that the running loop was still ramping to.
+        let target = current
+            .max(self.switch_request(temp, quiet))
+            .max(self.gpu_assist)
+            .max(gpu_request)
+            .max(gpu_protection);
+        if temp >= 75. || gpu_protection > 0 {
+            return (target.max(fallback), "stopped-thermal-protection");
+        }
+        if self.sensor_fault_latched() {
+            return (target.max(fallback), "stopped-sensor-recovery");
+        }
+        (
+            target,
+            if target > current {
+                "stopped-demand"
+            } else {
+                "stopped-hold"
+            },
+        )
+    }
     pub fn decide(
         &mut self,
         now: u64,
@@ -152,6 +183,58 @@ impl Policy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn normal_stop_keeps_recovered_pwm_instead_of_replaying_old_fallback() {
+        let mut p = Policy::new(30);
+        p.sensor_fault(100);
+        p.decide(0, 50., 30, 0, true, 100);
+        let mut current = 100;
+        for now in (60..=90).step_by(5) {
+            current = p.decide(now, 50., 30, 0, true, current);
+            p.last_change = now;
+            // Stopping partway through recovery must retain its current speed.
+            assert_eq!(
+                p.stop_target(50., 30, 0, true, current, 100),
+                (current, "stopped-hold")
+            );
+        }
+        assert_eq!(current, 30);
+        assert_eq!(
+            p.stop_target(50., 30, 0, true, current, 100),
+            (30, "stopped-hold")
+        );
+        assert_eq!(p.stop_target(50., 30, 0, true, 50, 100).0, 50);
+    }
+    #[test]
+    fn normal_stop_covers_fresh_and_held_demand_without_rise_delay() {
+        let mut p = Policy::new(30);
+        assert_eq!(
+            p.stop_target(50., 70, 0, true, 30, 100),
+            (70, "stopped-demand")
+        );
+        assert_eq!(p.stop_target(70., 30, 0, true, 30, 100).0, 45);
+        assert_eq!(p.stop_target(50., 30, 0, false, 30, 100).0, 35);
+        p.gpu_assist = 65;
+        assert_eq!(p.stop_target(50., 30, 0, true, 30, 100).0, 65);
+    }
+    #[test]
+    fn normal_stop_keeps_thermal_and_unresolved_sensor_protection() {
+        let mut p = Policy::new(30);
+        assert_eq!(
+            p.stop_target(75., 30, 0, true, 30, 100),
+            (100, "stopped-thermal-protection")
+        );
+        assert_eq!(p.stop_target(50., 80, 80, true, 30, 100).0, 100);
+        assert_eq!(p.stop_target(90., 30, 0, true, 30, 80).0, 100);
+        assert_eq!(p.stop_target(50., 100, 100, true, 30, 80).0, 100);
+        p.sensor_fault(100);
+        p.decide(0, 50., 30, 0, true, 100);
+        p.decide(59, 50., 30, 0, true, 100);
+        assert_eq!(
+            p.stop_target(50., 30, 0, true, 30, 100),
+            (100, "stopped-sensor-recovery")
+        );
+    }
     #[test]
     fn protections_override_noise_and_rate_limits() {
         let mut p = Policy::new(35);

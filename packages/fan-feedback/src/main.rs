@@ -264,6 +264,75 @@ fn calibrate(c: &Config, stages: &str) -> Result<()> {
     result
 }
 
+fn stop_controller(c: &Config, fan: &mut Fan, policy: &Policy) -> Result<()> {
+    let mut value = json!({"time":timestamp(),"event":"controller-stop",
+        "initial_pwm":fan.original.as_ref().map(|s| s.pwm),
+        "initial_manual":fan.original.as_ref().map(|s| s.manual)});
+    let readings = (|| -> Result<_> {
+        let temp = temperature(c)?;
+        let gpus = gpu::read(&c.gpu_pci)?;
+        let status = fan.status()?;
+        if status.parameters()
+            != fan
+                .original
+                .as_ref()
+                .ok_or("missing baseline")?
+                .parameters()
+        {
+            return Err("controller parameters changed before stop".into());
+        }
+        if status.rpm < 300 {
+            return Err("fan RPM below 300 before stop".into());
+        }
+        Ok((temp, gpus, status))
+    })();
+    let (mut target, reason) = match readings {
+        Ok((temp, gpus, status)) => {
+            value["previous_pwm"] = json!(status.pwm);
+            value["switch_c"] = json!(temp);
+            value["gpus"] = json!(gpus.iter().map(gpu::Gpu::json).collect::<Vec<_>>());
+            policy.stop_target(
+                temp,
+                gpu::request(&gpus),
+                gpu::protection(&gpus),
+                c.quiet().0,
+                status.pwm,
+                c.fallback,
+            )
+        }
+        Err(e) => {
+            value["telemetry_error"] = json!(e.to_string());
+            (c.fallback, "stopped-telemetry-fault")
+        }
+    };
+    value["policy"] = json!(reason);
+    // fallback() also sends a best-effort command if notifications go stale.
+    // A failed quiet handoff must still attempt the usual safe fallback.
+    let mut confirmation = fan.fallback(target);
+    if let Err(e) = &confirmation {
+        value["command_error"] = json!(e.to_string());
+        value["policy"] = json!("stopped-command-fault");
+        if target < c.fallback {
+            target = c.fallback;
+            confirmation = fan.fallback(target);
+        }
+    }
+    value["target_pwm"] = json!(target);
+    value["confirmed"] = json!(confirmation.is_ok());
+    if let Ok(status) = fan.status() {
+        value["pwm"] = json!(status.pwm);
+        value["rpm"] = json!(status.rpm);
+        value["manual"] = json!(status.manual);
+    }
+    if let Err(e) = &confirmation {
+        value["confirmation_error"] = json!(e.to_string());
+    }
+    value["time"] = json!(timestamp());
+    eprintln!("{value}");
+    atomic_json(&c.state.join("status.json"), &value)?;
+    confirmation
+}
+
 fn connected_loop(c: &Config, fan: &mut Fan) -> Result<()> {
     let original = fan.original.clone().ok_or("missing baseline")?;
     let mut policy = Policy::new(c.minimum);
@@ -357,13 +426,9 @@ fn connected_loop(c: &Config, fan: &mut Fan) -> Result<()> {
             &json!({"time":timestamp(),"policy":"connection-fault","error":result.as_ref().err().map(ToString::to_string),"fallback_confirmed":fallback.is_ok()}),
         );
     } else {
-        // A normal stop restores the device's original state if thermally safe.
-        if safe_to_restore(c) {
-            fan.restore(&original)?;
-        } else {
-            fan.fallback(c.fallback)?;
-        }
-        eprintln!("Controller stopped; exit state confirmed");
+        // Keep current validated airflow; an inherited initial 100% is not
+        // an exit target and must not be replayed on every service restart.
+        stop_controller(c, fan, &policy)?;
     }
     result
 }
@@ -376,8 +441,8 @@ fn daemon(c: &Config) -> Result<()> {
                 if initial.is_none() {
                     initial = fan.original.clone();
                 }
-                // Reconnection must not replace the pre-controller exit state
-                // with a fallback PWM from a previous failed session.
+                // Keep the initial parameter baseline across reconnections;
+                // normal stop chooses its PWM from fresh demand, not this state.
                 fan.original = initial.clone();
                 eprintln!(
                     "Connected to {} with parameter-preserving control",
