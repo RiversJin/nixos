@@ -289,6 +289,38 @@ fn restore_at(hwmon: &Path, s: &Settings) -> Result<()> {
 
 const CPU_FILTER_SECONDS: f64 = 60.;
 const MEMORY_FILTER_SECONDS: f64 = 15.;
+const COOLDOWN_CONFIRM_SECONDS: u64 = 60;
+const COOLDOWN_STEP_SECONDS: u64 = 10;
+const COOLDOWN_STEP_PWM: u8 = 5;
+const COOLDOWN_EXCESS_PWM: u8 = 10;
+
+fn cpu_request(cpu: f64, floor: u8) -> u8 {
+    interpolate(
+        cpu,
+        &[
+            (45., floor),
+            (55., floor.max(45)),
+            (65., 60),
+            (75., 75),
+            (80., 85),
+            (85., 100),
+        ],
+    )
+}
+
+fn memory_request(memory: f64, floor: u8) -> u8 {
+    interpolate(
+        memory,
+        &[
+            (40., floor),
+            (45., floor.max(45)),
+            (50., 60),
+            (55., 75),
+            (60., 85),
+            (65., 100),
+        ],
+    )
+}
 
 struct Policy {
     minimum: u8,
@@ -301,6 +333,10 @@ struct Policy {
     request: u8,
     cpu_request: u8,
     memory_request: u8,
+    cooldown: bool,
+    cool_since: Option<u64>,
+    recovery_target: u8,
+    phase: &'static str,
 }
 impl Policy {
     fn new(minimum: u8) -> Self {
@@ -315,6 +351,10 @@ impl Policy {
             request: minimum,
             cpu_request: minimum,
             memory_request: minimum,
+            cooldown: false,
+            cool_since: None,
+            recovery_target: minimum,
+            phase: "normal",
         }
     }
     fn decide(&mut self, now: u64, cpu: f64, memory: f64, quiet: bool, current: u8) -> u8 {
@@ -334,32 +374,28 @@ impl Policy {
             self.memory = memory;
         }
         self.sample_at = now;
-        self.cpu_request = interpolate(
-            self.cpu.unwrap(),
-            &[
-                (45., floor),
-                (55., floor.max(45)),
-                (65., 60),
-                (75., 75),
-                (80., 85),
-                (85., 100),
-            ],
-        );
-        self.memory_request = interpolate(
-            self.memory,
-            &[
-                (40., floor),
-                (45., floor.max(45)),
-                (50., 60),
-                (55., 75),
-                (60., 85),
-                (65., 100),
-            ],
-        );
+        self.cpu_request = cpu_request(self.cpu.unwrap(), floor);
+        self.memory_request = memory_request(self.memory, floor);
         self.request = self.cpu_request.max(self.memory_request);
         if self.request >= self.held || now >= self.hold_until {
             self.held = self.request;
             self.hold_until = now + 120;
+        }
+        let target = self.held.max(floor);
+        // Raw demand bounds recovery too: a new load must not be hidden by
+        // the slow CPU filter while we are lowering airflow.
+        self.recovery_target = target
+            .max(cpu_request(cpu, floor))
+            .max(memory_request(memory, floor));
+        self.phase = "normal";
+        if cpu < 75. && memory < 55. {
+            self.cool_since.get_or_insert(now);
+        } else {
+            self.cool_since = None;
+        }
+        if cpu >= 80. || memory >= 60. {
+            self.cooldown = true;
+            self.phase = "thermal-protection";
         }
         if cpu >= 85. || memory >= 65. {
             return 100;
@@ -367,7 +403,33 @@ impl Policy {
         if cpu >= 80. || memory >= 60. {
             return self.held.max(85).max(current);
         }
-        let target = self.held.max(floor);
+        // Also recover excess airflow inherited from BIOS on takeover or
+        // left behind by a sustained load below the raw protection threshold.
+        if current >= self.recovery_target.saturating_add(COOLDOWN_EXCESS_PWM) {
+            self.cooldown = true;
+        }
+        if self.cooldown {
+            if current <= target {
+                self.cooldown = false;
+            } else if current <= self.recovery_target {
+                self.phase = "cooldown-wait";
+                return current;
+            } else if self
+                .cool_since
+                .is_some_and(|since| now.saturating_sub(since) >= COOLDOWN_CONFIRM_SECONDS)
+            {
+                self.phase = "cooldown-ramp";
+                if now.saturating_sub(self.last_change) >= COOLDOWN_STEP_SECONDS {
+                    return self
+                        .recovery_target
+                        .max(current.saturating_sub(COOLDOWN_STEP_PWM));
+                }
+                return current;
+            } else {
+                self.phase = "cooldown-wait";
+                return current;
+            }
+        }
         if target >= current.saturating_add(3) || current < floor {
             // CPU junction jumps are handled by its own BIOS fan. Raise case
             // airflow gently unless the DIMMs request the held target.
@@ -436,7 +498,8 @@ pub fn daemon(c: &Config) -> Result<()> {
                     r.cpu, r.memory, r.rpm
                 );
             }
-            let v = json!({"time":timestamp(),"policy":reason,"cpu_c":r.cpu,"memory_c":r.memory,
+            let v = json!({"time":timestamp(),"policy":reason,"control_phase":policy.phase,
+                "recovery_target_pwm":policy.recovery_target,"cpu_c":r.cpu,"memory_c":r.memory,
                 "filtered_cpu_c":policy.cpu,"filtered_memory_c":policy.memory,"memory_sensors":r.sensors,
                 "requested_pwm":policy.request,"cpu_request_pwm":policy.cpu_request,"memory_request_pwm":policy.memory_request,
                 "cpu_filter_seconds":CPU_FILTER_SECONDS,"memory_filter_seconds":MEMORY_FILTER_SECONDS,"held_pwm":policy.held,"pwm":percent(r.raw),"pwm_raw":r.raw,
@@ -473,15 +536,132 @@ mod tests {
         assert_eq!(Policy::new(20).decide(0, 38., 39., false, 20), 45);
     }
     #[test]
-    fn heat_persists_after_load_then_releases_slowly() {
+    fn heat_persists_before_bounded_cooldown() {
         let mut p = Policy::new(20);
         p.decide(0, 75., 55., true, 75);
         assert_eq!(p.held, 75);
         p.decide(10, 38., 39., true, 75);
         assert_eq!(p.held, 75);
         let next = p.decide(121, 38., 39., true, 75);
-        assert_eq!(next, 73);
+        assert_eq!(next, 70);
         assert_eq!(p.held, 20);
+        assert_eq!(p.phase, "cooldown-ramp");
+    }
+
+    fn tick(p: &mut Policy, now: u64, cpu: f64, memory: f64, quiet: bool, current: &mut u8) {
+        let next = p.decide(now, cpu, memory, quiet, *current);
+        if next != *current {
+            p.last_change = now;
+            *current = next;
+        }
+    }
+
+    #[test]
+    fn sustained_high_cpu_load_returns_near_idle_within_five_minutes() {
+        let mut p = Policy::new(20);
+        let mut current = 20;
+        for now in (0..=600).step_by(5) {
+            tick(&mut p, now, 90., 41., true, &mut current);
+            assert_eq!(current, 100);
+        }
+        let mut ramp_steps = 0;
+        for now in (605..=900).step_by(5) {
+            let before = current;
+            let last_change = p.last_change;
+            tick(&mut p, now, 45., 31., true, &mut current);
+            assert!(current >= p.recovery_target);
+            if current < before {
+                assert!(before - current <= 5);
+                assert!(now - last_change >= 10);
+                assert_eq!(p.phase, "cooldown-ramp");
+                ramp_steps += 1;
+            }
+        }
+        // The 120-second demand hold can still retain a few points above
+        // baseline while the CPU filter settles. Recovery must honor that.
+        assert_eq!(current, p.held);
+        assert!(current <= 25);
+        assert!(ramp_steps >= 15);
+        assert_eq!(p.phase, "normal");
+    }
+
+    #[test]
+    fn inherited_excess_pwm_requires_a_cool_window_and_respects_away_floor() {
+        for (quiet, expected) in [(true, 20), (false, 45)] {
+            let mut p = Policy::new(20);
+            let mut current = 70;
+            for now in (0..60).step_by(5) {
+                tick(&mut p, now, 45., 31., quiet, &mut current);
+                assert_eq!(current, 70);
+                assert_eq!(p.phase, "cooldown-wait");
+            }
+            tick(&mut p, 60, 45., 31., quiet, &mut current);
+            assert_eq!(current, 65);
+            tick(&mut p, 65, 45., 31., quiet, &mut current);
+            assert_eq!(current, 65);
+            for now in (70..=180).step_by(5) {
+                tick(&mut p, now, 45., 31., quiet, &mut current);
+                assert!(current >= expected);
+            }
+            assert_eq!(current, expected);
+            assert_eq!(p.phase, "normal");
+        }
+    }
+
+    #[test]
+    fn renewed_raw_demand_bounds_cooldown_before_filters_catch_up() {
+        for (cpu, memory, demand) in [(74., 31., 74), (45., 54., 72)] {
+            let mut p = Policy::new(20);
+            let mut current = 80;
+            for now in (0..=70).step_by(5) {
+                tick(&mut p, now, 45., 31., true, &mut current);
+            }
+            assert_eq!(current, 70);
+            // A returning load already needs more than current airflow. Do
+            // not fall through to ordinary descent when ending recovery.
+            tick(&mut p, 80, cpu, memory, true, &mut current);
+            assert_eq!(current, 70);
+            assert_eq!(p.recovery_target, demand);
+            // When there is room to descend, stop at raw demand, not the
+            // lagging filter's much lower request.
+            current = 75;
+            tick(&mut p, 90, cpu, memory, true, &mut current);
+            assert_eq!(current, demand);
+        }
+    }
+
+    #[test]
+    fn temperature_rebound_restarts_confirmation_and_protection_is_immediate() {
+        for (cpu, memory) in [(75., 31.), (45., 55.), (80., 31.), (45., 60.)] {
+            let mut p = Policy::new(20);
+            let mut current = 100;
+            for now in (0..=60).step_by(5) {
+                tick(&mut p, now, 45., 31., true, &mut current);
+            }
+            assert_eq!(current, 95);
+            tick(&mut p, 65, cpu, memory, true, &mut current);
+            assert_eq!(current, 95);
+            assert_eq!(p.cool_since, None);
+            for now in (70..130).step_by(5) {
+                tick(&mut p, now, 45., 31., true, &mut current);
+                assert_eq!(current, 95);
+            }
+            tick(&mut p, 130, 45., 31., true, &mut current);
+            assert_eq!(current, 90);
+            tick(&mut p, 135, 85., 31., true, &mut current);
+            assert_eq!(current, 100);
+            assert_eq!(p.phase, "thermal-protection");
+            assert_eq!(p.cool_since, None);
+            assert_eq!(p.decide(136, 45., 65., true, 90), 100);
+        }
+    }
+
+    #[test]
+    fn small_normal_adjustments_keep_the_original_slow_descent() {
+        let mut p = Policy::new(20);
+        assert_eq!(p.decide(0, 45., 31., true, 28), 28);
+        assert_eq!(p.decide(60, 45., 31., true, 28), 26);
+        assert_eq!(p.phase, "normal");
     }
     #[test]
     fn short_cpu_burst_does_not_raise_case_fan() {

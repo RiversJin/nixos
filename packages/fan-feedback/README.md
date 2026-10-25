@@ -113,9 +113,23 @@ smoothed independently: CPU uses a 60-second time constant to suppress short
 junction-temperature bursts, while memory retains 15 seconds. Elevated
 demand persists for 120 seconds. Ordinary CPU-driven increases are limited to
 +3 points/30 seconds; a memory request covering the full held target retains
-+5 points/15 seconds. Decreases remain -2 points/60 seconds. Raw CPU >=80 C or
++5 points/15 seconds. Small ordinary decreases remain -2 points/60 seconds. Raw CPU >=80 C or
 memory >=60 C immediately requests at least 85%; CPU >=85 C or memory >=65 C
 requests 100%. These are conservative control thresholds, not chip ratings.
+
+After thermal protection, or when actual PWM exceeds cooling demand by at least
+10 points (including high output inherited from BIOS on takeover), the host uses
+a bounded cooldown instead of leaving the fan elevated for tens of minutes.
+CPU must stay below 75 C and memory below 55 C for 60 seconds before fast descent
+is allowed; reaching either threshold resets that window. Each descent is at
+most 5 points every 10 seconds, bounded by the maximum of raw CPU/memory demand,
+filtered and held demand, and the current mode's minimum. The existing 120-second
+demand hold still applies. Returning heat can pause descent or immediately
+restore protection. After reaching the held target, ordinary control resumes.
+For a sustained 90 C CPU load followed by steady 45 C CPU / 31 C memory, policy
+tests verify return from 100% to at most 25% within five minutes. Status exposes
+`control_phase` (`normal`, `thermal-protection`, `cooldown-wait`, or
+`cooldown-ramp`) and `recovery_target_pwm` to make the descent observable.
 
 Memory input requires both installed DIMMs' enabled `spd5118` digital sensors;
 a missing, disabled or invalid sensor is a fault. It does not use the unverified
