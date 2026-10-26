@@ -115,16 +115,23 @@ interface as `nct6799` through the stock `nct6775` driver at
 `/sys/devices/platform/nct6775.656/hwmon`. No force_id or ACPI resource override
 is needed. The MSI-specific driver is no longer loaded.
 
-Quiet mode has a **20% minimum**. CPU Tctl 45/55/65/75/80/85 C requests
-20/45/60/75/85/100%; maximum DDR5 SPD temperature 40/45/50/55/60/65 C requests
-20/45/60/75/85/100%. Away/cool mode has a 45% minimum. Temperatures are
+Quiet mode has a **20% minimum**. Host airflow primarily follows the hottest
+DDR5 SPD sensor: 40/45/50/55/60/65 C requests 20/45/60/75/85/100%.
+CPU Tctl provides gentler assistance: 65/75/80/85/90 C requests
+20/30/40/50/65%. Away/cool mode has a 45% minimum. Temperatures are
 smoothed independently: CPU uses a 60-second time constant to suppress short
 junction-temperature bursts, while memory retains 15 seconds. Elevated
 demand persists for 120 seconds. Ordinary CPU-driven increases are limited to
 +3 points/30 seconds; a memory request covering the full held target retains
-+5 points/15 seconds. Small ordinary decreases remain -2 points/60 seconds. Raw CPU >=80 C or
-memory >=60 C immediately requests at least 85%; CPU >=85 C or memory >=65 C
-requests 100%. These are conservative control thresholds, not chip ratings.
++5 points/15 seconds. Small ordinary decreases remain -2 points/60 seconds.
+Raw memory >=60 C immediately requests at least 85%; memory >=65 C requests
+100%, regardless of CPU temperature. CPU >=85 C must persist for 60 seconds
+to request at least 85%; CPU >=90 C must independently persist for 60 seconds
+to request 100%. A sample below each threshold resets its own timer. CPU >=95 C
+still immediately requests 100%. The 95 C emergency threshold matches the
+installed Ryzen 9 9950X3D2's [AMD-specified Tjmax](https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x3d2-dual-edition.html);
+the remaining values are control choices, not chip ratings. CPU and memory
+requests are combined by maximum, so cool DIMMs never suppress CPU protection.
 
 After thermal protection, or when actual PWM exceeds cooling demand by at least
 10 points (including high output inherited from BIOS on takeover), the host uses
@@ -135,10 +142,16 @@ most 5 points every 10 seconds, bounded by the maximum of raw CPU/memory demand,
 filtered and held demand, and the current mode's minimum. The existing 120-second
 demand hold still applies. Returning heat can pause descent or immediately
 restore protection. After reaching the held target, ordinary control resumes.
-For a sustained 90 C CPU load followed by steady 45 C CPU / 31 C memory, policy
-tests verify return from 100% to at most 25% within five minutes. Status exposes
+Policy tests cover 30-second 91.5 C CPU bursts with cool DIMMs, independent
+continuous-duration CPU guards, and immediate memory/emergency protection.
+For a sustained 90 C CPU load followed by steady 45 C CPU / 31 C memory, they
+verify return from 100% to at most 25% within five minutes. Status exposes
 `control_phase` (`normal`, `thermal-protection`, `cooldown-wait`, or
 `cooldown-ramp`) and `recovery_target_pwm` to make the descent observable.
+`cpu_protection_pwm` / `memory_protection_pwm` distinguish active guards from
+ordinary curve demand; `cpu_warm_seconds` / `cpu_hot_seconds` report continuous
+time at >=85 / >=90 C. The confirmation interval and emergency threshold are
+also included in status.
 
 Memory input requires both installed DIMMs' enabled `spd5118` digital sensors;
 a missing, disabled or invalid sensor is a fault. It does not use the unverified
