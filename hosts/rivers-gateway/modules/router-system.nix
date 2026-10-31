@@ -183,6 +183,7 @@ in
       dhcp-host = [
         "b0:82:e2:c5:82:de,rivers-host,192.168.50.10,12h"
         "4c:49:6c:32:63:ab,rivers-laptop,192.168.50.11,12h"
+        "38:2c:e5:4c:d9:fb,air-purifier,192.168.50.169,12h"
       ];
       dhcp-option = [
         "option:router,${lanAddress}"
