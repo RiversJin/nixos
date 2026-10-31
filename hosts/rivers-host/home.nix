@@ -24,7 +24,6 @@
     ./home/neovim.nix
     ./home/xremap.nix
     ./home/codex.nix
-    ./home/pizzapi.nix
     ./home/omp.nix
   ];
 
