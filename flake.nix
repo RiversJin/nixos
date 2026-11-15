@@ -28,8 +28,6 @@
     gateway-nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "host-nixpkgs";
-    agenix.inputs.home-manager.follows = "host-home-manager";
-    agenix.inputs.darwin.follows = "";
   };
   outputs = inputs: {
     nixosConfigurations = {

@@ -66,7 +66,7 @@ overview {
     }
 }
 layer-rule {
-    match namespace="^noctalia-overview-"
+    match namespace="^noctalia-backdrop"
     place-within-backdrop true
 }
 cursor {
@@ -123,8 +123,8 @@ layer-rule {
 spawn-at-startup "systemctl" "--user" "start" "niri-desktop.target"
 screenshot-path "~/Pictures/Screenshots/%Y-%m-%d_%H-%M-%S.png"
 binds {
-    Alt+Space repeat=false hotkey-overlay-title="应用启动器" { spawn "noctalia-shell" "ipc" "call" "launcher" "toggle"; }
-    Super+Shift+V repeat=false hotkey-overlay-title="剪贴板历史" { spawn "noctalia-shell" "ipc" "call" "launcher" "clipboard"; }
+    Alt+Space repeat=false hotkey-overlay-title="应用启动器" { spawn "noctalia" "msg" "panel-toggle" "launcher"; }
+    Super+Shift+V repeat=false hotkey-overlay-title="剪贴板历史" { spawn "noctalia" "msg" "panel-toggle" "clipboard"; }
     Super+L repeat=false hotkey-overlay-title="锁屏" { spawn "swaylock" "-f"; }
     // Super+Space belongs to Fcitx5. Super+C/V belong to xremap.
     Mod+Return { spawn "kitty"; }
@@ -170,7 +170,7 @@ binds {
 
 // Keep protocol-provided blur shapes; blur the actual windows underneath.
 layer-rule {
-    match namespace="^noctalia-background-"
+    match namespace="^noctalia-(bar-.*|notification|dock|panel|attached-panel|osd)$"
     background-effect { xray false; }
 }
 

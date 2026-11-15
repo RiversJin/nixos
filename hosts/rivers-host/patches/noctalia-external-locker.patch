@@ -1,0 +1,59 @@
+Noctalia 5.4.1: honor session command overrides when using an external locker.
+
+The IPC handler bypassed configured commands; the menu and launcher also hid
+custom lock commands whenever the built-in locker was disabled. Keep the native
+locker off so swayidle remains the sole logind lock/suspend owner.
+
+--- a/src/shell/session/session_ipc.cpp
++++ b/src/shell/session/session_ipc.cpp
+@@ -7,6 +7,7 @@
+ #include "shell/lockscreen/lock_screen.h"
+ #include "shell/session/session_action_meta.h"
+ #include "shell/session/session_action_runner.h"
++#include "util/string_utils.h"
+ 
+ #include <string>
+ #include <string_view>
+@@ -38,6 +39,22 @@
+       return unknownSessionActionError(ipcAction);
+     }
+ 
++    // Match the session menu: explicit commands also work with the native
++    // lock screen disabled (e.g. swaylock), and disabled rows stay disabled.
++    for (const auto& configured : config.config().shell.session.actions) {
++      if (configured.action != *action) {
++        continue;
++      }
++      if (!configured.enabled) {
++        return "error: session action disabled\n";
++      }
++      if (configured.command.has_value() && !StringUtils::trim(*configured.command).empty()) {
++        runner.invoke(configured);
++        return "ok\n";
++      }
++      break;
++    }
++
+     if (*action == "lock") {
+       if (!config.isLockScreenEnabled()) {
+         return "error: lock screen disabled\n";
+--- a/src/shell/session/session_panel.cpp
++++ b/src/shell/session/session_panel.cpp
+@@ -69,6 +69,7 @@
+       continue;
+     }
+     if ((row.action == "lock" || row.action == "lock_and_suspend")
++        && (!row.command.has_value() || StringUtils::trim(*row.command).empty())
+         && m_config != nullptr
+         && !m_config->isLockScreenEnabled()) {
+       continue;
+--- a/src/launcher/session_provider.cpp
++++ b/src/launcher/session_provider.cpp
+@@ -105,6 +105,7 @@
+         continue;
+       }
+       if ((row.action == "lock" || row.action == "lock_and_suspend")
++        && (!row.command.has_value() || StringUtils::trim(*row.command).empty())
+           && config != nullptr
+           && !config->isLockScreenEnabled()) {
+         continue;

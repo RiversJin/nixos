@@ -20,36 +20,12 @@ let
       };
     });
   };
-  noctalia = pkgs.noctalia-shell.overrideAttrs (old: {
+  noctalia = pkgs.noctalia.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ../patches/noctalia-external-locker.patch ];
     postPatch = (old.postPatch or "") + ''
-      substituteInPlace Modules/Panels/Launcher/LauncherListDelegate.qml \
-        --replace-fail 'font.weight: Style.fontWeightBold' 'font.weight: Style.fontWeightMedium'
-      substituteInPlace Modules/Panels/Launcher/LauncherGridDelegate.qml \
-        --replace-fail 'font.weight: Style.fontWeightBold' 'font.weight: Style.fontWeightMedium'
-      # Route every internal lock entry (including launcher and IPC) to swaylock.
-      cat > Modules/LockScreen/LockScreen.qml <<'QML'
-      import QtQuick
-      import Quickshell
-      import qs.Services.UI
-
-      Item {
-        property bool active: false
-        Component.onCompleted: PanelService.lockScreen = this
-        onActiveChanged: {
-          if (active) {
-            Quickshell.execDetached(["${pkgs.swaylock}/bin/swaylock", "-f"]);
-            active = false;
-          }
-        }
-      }
-      QML
-      # Reuse Noctalia's overview renderer with our per-monitor daily wallpapers.
-      substituteInPlace Modules/Background/Overview.qml \
-        --replace-fail 'CompositorService.isNiri && Settings.data.wallpaper.enabled &&' 'CompositorService.isNiri &&' \
-        --replace-fail 'property string wallpaper: ""' 'property string wallpaper: "file://${config.home.homeDirectory}/.local/state/niri-daily/current/wallpaper-" + modelData.name'
-      # Qt cannot resolve Fcitx's English-state symbolic icon through the GTK theme.
-      substituteInPlace Modules/Bar/Widgets/Tray.qml \
-        --replace-fail 'let icon = modelData?.icon || "";' 'let icon = modelData?.icon || ""; if (/\/(input-keyboard-symbolic|fcitx_rime_latin)(\?|$)/.test(icon)) return "file://${./niri/rime-latin.svg}";'
+      # Preserve the lighter launcher text used by the v4 desktop.
+      substituteInPlace src/shell/launcher/launcher_panel.cpp \
+        --replace-fail 'FontWeight::SemiBold' 'FontWeight::Medium'
     '';
   });
   controlCard = pkgs.stdenvNoCC.mkDerivation {
@@ -169,7 +145,7 @@ let
         i = {
           start = [ ];
           update = { };
-          end = [ "${noctalia}/bin/noctalia-shell ipc call launcher toggle" ];
+          end = [ "${noctalia}/bin/noctalia msg panel-toggle launcher" ];
         };
         o = {
           start = [ ];
@@ -244,20 +220,36 @@ in
     PYTHON
     ${pkgs.xdg-utils}/bin/xdg-mime default nemo.desktop inode/directory
   '';
-  # Seed writable Noctalia preferences when the declarative preset changes.
-  # Ordinary rebuilds preserve changes made in Noctalia's settings UI.
-  home.activation.niriNoctalia = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
-    run mkdir -p "${config.home.homeDirectory}/.config/noctalia"
-    for name in settings colors; do
-      source_file="${./niri/noctalia}/$name.json"
-      target_file="${config.home.homeDirectory}/.config/noctalia/$name.json"
-      preset_file="${config.home.homeDirectory}/.config/noctalia/.$name-preset.json"
-      if ! cmp -s "$source_file" "$preset_file" || [ ! -f "$target_file" ]; then
-        run install -m 600 "$source_file" "$target_file"
-        run install -m 600 "$source_file" "$preset_file"
-      fi
-    done
-  '';
+  # v5 keeps GUI overrides in ~/.local/state/noctalia/settings.toml, so the
+  # declarative base can be immutable without discarding later GUI changes.
+  # Leave the v4 JSON files in place for rollback to an older system generation.
+  xdg.configFile."noctalia/config.toml".source = ./niri/noctalia/config.toml;
+  xdg.configFile."noctalia/palettes/Rivers.json".text = builtins.toJSON {
+    dark = (builtins.fromJSON (builtins.readFile ./niri/noctalia/colors.json)) // {
+      # v5 palettes use RGB; transparency belongs to the bar/panel settings.
+      mSurfaceVariant = "#ffffff";
+      mHover = "#808080";
+      # v5 requires terminal colors even when app-template generation is off.
+      terminal = let
+        ansi = {
+          black = "#2b3045"; red = "#f7768e"; green = "#9ece6a";
+          yellow = "#e0af68"; blue = "#7aa2f7"; magenta = "#bb9af7";
+          cyan = "#7dcfff"; white = "#c0caf5";
+        };
+      in {
+        background = "#2b3045";
+        foreground = "#c0caf5";
+        cursor = "#c0caf5";
+        cursorText = "#2b3045";
+        selectionBg = "#364a82";
+        selectionFg = "#c0caf5";
+        normal = ansi;
+        bright = ansi // { black = "#565f89"; white = "#ffffff"; };
+      };
+    };
+  };
+  xdg.configFile."noctalia/nixos.svg".source =
+    "${pkgs.nixos-icons}/share/icons/hicolor/scalable/apps/nix-snowflake.svg";
   # A path-only tray glyph avoids font-dependent rendering of Rime's SVG.
   xdg.dataFile."icons/hicolor/scalable/apps/fcitx_rime_latin.svg".source = ./niri/rime-latin.svg;
   xdg.dataFile."icons/hicolor/scalable/apps/org.fcitx.Fcitx5.fcitx_rime_latin.svg".source =
@@ -352,9 +344,7 @@ in
       Install.WantedBy = [ "niri-desktop.target" ];
     };
     niri-polkit = sessionService "Niri authentication agent" "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1";
-    niri-bar =
-      lib.recursiveUpdate (sessionService "Niri Noctalia desktop shell" "${noctalia}/bin/noctalia-shell")
-        { Service.Environment = [ "QS_ICON_THEME=breeze" ]; };
+    niri-bar = sessionService "Niri Noctalia desktop shell" "${noctalia}/bin/noctalia";
     niri-wallpaper = sessionService "Moonlit ridges wallpaper" "${dailyTheme}/bin/niri-daily wallpaper";
     niri-notifications = sessionService "Niri notifications" "${pkgs.mako}/bin/mako";
     niri-fcitx5 = sessionService "Niri input method" "${config.i18n.inputMethod.package}/bin/fcitx5 -D";

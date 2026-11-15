@@ -1,0 +1,214 @@
+# Noctalia v5 base. GUI changes are stored separately in the user's state dir.
+[shell]
+font_family = "Noto Sans CJK SC"
+lang = "zh-CN"
+corner_radius_scale = 0.75
+button_borders = false
+card_borders = false
+telemetry_enabled = false
+setup_wizard_enabled = false
+polkit_agent = false
+clipboard_enabled = true
+clipboard_auto_paste = "off"
+
+[shell.panel]
+transparency_mode = "glass"
+borders = false
+launcher_placement = "floating"
+launcher_position = "center"
+clipboard_placement = "floating"
+clipboard_position = "center"
+control_center_placement = "floating"
+open_near_click_control_center = true
+session_placement = "floating"
+
+[shell.launcher]
+layout = "simple"
+categories = true
+app_grid = false
+sort_by_usage = true
+auto_paste = "off"
+
+[shell.launcher.providers.session]
+global = true
+
+[shell.session]
+grid = false
+show_shortcuts = true
+
+[[shell.session.actions]]
+action = "lock"
+command = "swaylock -f"
+shortcut = "1"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action = "suspend"
+shortcut = "2"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action = "command"
+label = "休眠"
+glyph = "moon"
+command = "systemctl hibernate"
+shortcut = "3"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action = "reboot"
+shortcut = "4"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action = "logout"
+command = "niri-logout"
+shortcut = "5"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action = "shutdown"
+shortcut = "6"
+countdown_seconds = 10
+
+[[shell.session.actions]]
+action = "reboot_uefi"
+shortcut = "7"
+countdown_seconds = 10
+
+# swaylock and niri-idle own locking, including the logind sleep handoff.
+[lockscreen]
+enabled = false
+lock_before_suspend = false
+
+[idle.behavior.lock]
+enabled = false
+
+[idle.behavior.screen-off]
+enabled = false
+
+[notification]
+enable_daemon = false
+
+[theme]
+mode = "dark"
+source = "custom"
+custom_palette = "Rivers"
+sync_color_scheme = false
+
+[theme.templates]
+enable_builtin_templates = false
+enable_community_templates = false
+
+[bar.main]
+position = "top"
+thickness = 34
+background_opacity = 0.32
+compositor_blur = true
+radius = 0
+margin_ends = 0
+margin_edge = 0
+padding = 8
+widget_spacing = 8
+capsule = false
+shadow = false
+reserve_space = true
+start = ["workspaces", "active_window"]
+center = ["clock", "trackpad_battery"]
+end = ["tray", "volume", "network", "control-center"]
+
+[bar.main.dead_zone.actions]
+right = "panel-toggle control-center"
+
+[widget.workspaces]
+label_source = "id"
+max_label_chars = 2
+pill_scale = 0.6
+labels_only_when_occupied = true
+show_icons = false
+show_all_outputs = false
+font_weight = 700
+
+[widget.active_window]
+min_length = 0
+max_length = 145
+title_scroll = "on_hover"
+show_empty_label = false
+
+[widget.clock]
+format = "{:%H:%M %m-%d %a}"
+tooltip_format = "{:%H:%M %a, %b %d}"
+
+[widget.trackpad_battery]
+type = "battery"
+device = "Apple Inc. Magic Trackpad"
+display_mode = "glyph"
+show_label = false
+
+[widget.tray]
+hide_passive = false
+drawer = false
+
+[widget.volume]
+show_label = true
+
+[widget.volume.actions]
+middle = "exec pwvucontrol || pavucontrol"
+
+[widget.network]
+show_label = false
+
+[widget.control-center]
+custom_image = "~/.config/noctalia/nixos.svg"
+
+[control_center]
+shortcuts = [{ type = "wifi" }, { type = "bluetooth" }]
+
+[weather]
+enabled = false
+
+[bluetooth]
+connect_when_enabled = true
+connection_notifications = false
+
+[audio]
+enable_overdrive = false
+
+[osd]
+enabled = true
+position = "top_right"
+
+# swaybg owns desktop wallpaper; Noctalia only renders the overview backdrop.
+# niri-daily restarts the bar after atomically replacing these image symlinks.
+[wallpaper]
+enabled = false
+directory = "~/Pictures/Wallpapers"
+
+[wallpaper.default]
+path = "~/.local/state/niri-daily/current/wallpaper"
+
+[wallpaper.monitors.DP-1]
+path = "~/.local/state/niri-daily/current/wallpaper-DP-1"
+
+[wallpaper.monitors.DP-3]
+path = "~/.local/state/niri-daily/current/wallpaper-DP-3"
+
+[backdrop]
+enabled = true
+blur_intensity = 0.85
+tint_intensity = 0.3
+
+[desktop_widgets]
+enabled = true
+widget_order = ["clock_dp3"]
+
+[desktop_widgets.widget.clock_dp3]
+type = "clock"
+output = "DP-3"
+cx = 200.0
+cy = 130.0
+
+[desktop_widgets.widget.clock_dp3.settings]
+clock_style = "digital"
+format = "{:%H:%M}\n{:%d %B %Y}"
+background = true
