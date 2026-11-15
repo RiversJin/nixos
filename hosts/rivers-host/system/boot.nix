@@ -9,7 +9,14 @@ let
   # LLD 23 includes the symbol-initialization fix needed with GCC 16 builds.
   llvm = pkgs.llvmPackages_23;
   kernelStdenv = pkgs.overrideCC pkgs.stdenv (llvm.clang.override { bintools = llvm.bintools; });
-  kernelBindgen = pkgs.rust-bindgen-unwrapped.override { clang = llvm.clang; };
+  kernelBindgen = pkgs.rust-bindgen-unwrapped.overrideAttrs (old: {
+    # Bindgen now selects clang internally and links libclang at build time.
+    # Match the kernel compiler rather than Rust's default LLVM version.
+    preConfigure = (old.preConfigure or "") + ''
+      export LIBCLANG_PATH="${lib.getLib llvm.clang.cc}/lib"
+    '';
+    nativeCheckInputs = [ llvm.clang ];
+  });
 in
 {
   # Bootloader

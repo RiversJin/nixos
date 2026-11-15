@@ -17,11 +17,11 @@ in
       postBuild = ''
         rm $out/bin/qq
         ln -s ${launcher} $out/bin/qq
-        # The upstream desktop entry uses an absolute store path.
+        # Route the upstream PATH-based entry through our clipboard launcher.
         rm $out/share/applications/qq.desktop
         substitute ${pkgs.qq}/share/applications/qq.desktop \
           $out/share/applications/qq.desktop \
-          --replace-fail '${pkgs.qq}/bin/qq' "$out/bin/qq"
+          --replace-fail 'Exec=qq ' "Exec=$out/bin/qq "
       '';
     })
   ];

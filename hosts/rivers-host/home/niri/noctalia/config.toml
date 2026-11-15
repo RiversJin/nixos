@@ -8,6 +8,8 @@ card_borders = false
 telemetry_enabled = false
 setup_wizard_enabled = false
 polkit_agent = false
+# Keep launched apps outside niri-bar.service so shell restarts preserve them.
+launch_apps_as_systemd_services = true
 clipboard_enabled = true
 clipboard_auto_paste = "off"
 

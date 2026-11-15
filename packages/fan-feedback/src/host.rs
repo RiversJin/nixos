@@ -12,7 +12,7 @@ const BOARD_NAME: &str = "ROG STRIX B850-A GAMING WIFI7 S NEO";
 const HWMON_ROOT: &str = "/sys/devices/platform/nct6775.656/hwmon";
 const HWMON_NAME: &str = "nct6799";
 const CASE_CHANNEL: u8 = 1;
-const EXPECTED_DIMMS: usize = 2;
+const EXPECTED_DIMMS: usize = 3;
 
 pub struct Settings {
     pub state: PathBuf,
@@ -825,14 +825,14 @@ mod tests {
     fn ddr5_sensor_loss_and_disabled_or_invalid_readings_are_faults() {
         let root = test_root("memory");
         fs::create_dir_all(&root).unwrap();
-        for (n, value) in [(3, "39000"), (4, "42000")] {
+        for (n, value) in [(3, "39000"), (4, "42000"), (5, "45000")] {
             let p = root.join(format!("hwmon{n}"));
             fs::create_dir_all(&p).unwrap();
             fs::write(p.join("name"), "spd5118\n").unwrap();
             fs::write(p.join("temp1_enable"), "1").unwrap();
             fs::write(p.join("temp1_input"), value).unwrap();
         }
-        assert_eq!(memory_temps(&root).unwrap().0, 42.);
+        assert_eq!(memory_temps(&root).unwrap().0, 45.);
         fs::write(root.join("hwmon3/temp1_enable"), "0").unwrap();
         assert!(memory_temps(&root).is_err());
         fs::write(root.join("hwmon3/temp1_enable"), "1").unwrap();

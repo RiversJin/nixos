@@ -153,7 +153,7 @@ ordinary curve demand; `cpu_warm_seconds` / `cpu_hot_seconds` report continuous
 time at >=85 / >=90 C. The confirmation interval and emergency threshold are
 also included in status.
 
-Memory input requires both installed DIMMs' enabled `spd5118` digital sensors;
+Memory input requires all three installed DIMMs' enabled `spd5118` digital sensors;
 a missing, disabled or invalid sensor is a fault. It does not use the unverified
 analog temperature labels of the NCT6799 compatibility interface. The host
 loop does not use switch or GPU load. RPM <300 for three samples, invalid
